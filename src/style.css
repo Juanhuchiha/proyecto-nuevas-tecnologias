@@ -1,0 +1,62 @@
+:root {
+  font-family: Arial, sans-serif;
+  color: #34302b;
+  background: #f7f4ef;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  --bs-body-bg: #f7f4ef;
+  --bs-primary: #c8372d;
+  --bs-primary-rgb: 200, 55, 45;
+  --bs-danger: #c8372d;
+  --bs-danger-rgb: 200, 55, 45;
+}
+
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+  background: #f7f4ef;
+  color: #34302b;
+  font-family: Arial, sans-serif;
+}
+
+.restaurant-navbar {
+  min-height: 56px;
+  background-color: #c8372d;
+}
+
+.restaurant-navbar .navbar-brand,
+.restaurant-navbar .navbar-nav .nav-link {
+  color: #fff;
+}
+
+.restaurant-navbar .navbar-nav .nav-link:hover,
+.restaurant-navbar .navbar-nav .router-link-active {
+  color: #fff;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
+.authenticated-layout {
+  padding-top: 56px;
+}
+
+.card {
+  --bs-card-bg: #fff;
+  --bs-card-border-color: #e7e1d8;
+}
+
+.btn-primary {
+  --bs-btn-color: #fff;
+  --bs-btn-bg: #c8372d;
+  --bs-btn-border-color: #c8372d;
+  --bs-btn-hover-color: #fff;
+  --bs-btn-hover-bg: #a92e26;
+  --bs-btn-hover-border-color: #a92e26;
+  --bs-btn-focus-shadow-rgb: 200, 55, 45;
+  --bs-btn-active-color: #fff;
+  --bs-btn-active-bg: #a92e26;
+  --bs-btn-active-border-color: #a92e26;
+}
