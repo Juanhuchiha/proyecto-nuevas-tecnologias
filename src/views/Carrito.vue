@@ -46,6 +46,7 @@ async function submitOrder() {
 
   attemptedSubmit.value = true
   orderError.value = ''
+  orderWarning.value = ''
   const hasBlankField = Object.values(shipping).some((value) => !value.trim())
   if (hasBlankField || !shippingForm.value.checkValidity()) {
     orderError.value = 'Completa correctamente todos los campos de entrega.'
@@ -68,6 +69,7 @@ async function submitOrder() {
       })),
     })
 
+    orderWarning.value = order.eventWarning || ''
     orderNumber.value = order.id
     clearCart()
     registerDeliveryFromOrder(order)
@@ -76,10 +78,13 @@ async function submitOrder() {
     try {
       syncProductsFromApi(await fetchProducts())
     } catch (error) {
-      orderWarning.value =
+      const catalogWarning =
         error instanceof Error
-          ? `Pedido creado, pero no se pudo actualizar el catálogo: ${error.message}`
-          : 'Pedido creado, pero no se pudo actualizar el catálogo.'
+          ? `No se pudo actualizar el catálogo: ${error.message}`
+          : 'No se pudo actualizar el catálogo.'
+      orderWarning.value = [orderWarning.value, catalogWarning]
+        .filter(Boolean)
+        .join(' ')
     }
   } catch (error) {
     orderError.value =

@@ -1,0 +1,11 @@
+Command:
+npm run build
+
+vite v8.3.5 building client environment for production...
+34 modules transformed.
+
+dist/index.html                   0.63 kB
+dist/assets/index-BBw5_pPn.css  231.24 kB
+dist/assets/index-Di8Lk3xL.js   196.31 kB
+
+Build succeeded in 455ms.

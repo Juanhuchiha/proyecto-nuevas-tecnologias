@@ -1,0 +1,17 @@
+Backend: Python syntax check passed.
+
+Command:
+python -m unittest discover -s backend\tests -t . -v
+
+test_activity_crud_and_audit_logs ... ok
+test_activity_is_returned_when_audit_write_fails ... ok
+test_activity_validation_and_missing_references ... ok
+test_combined_order_history_and_status_update ... ok
+test_existing_product_user_order_and_report_endpoints ... ok
+test_health_and_outbox_retry_endpoints ... ok
+test_invalid_status_and_missing_order ... ok
+test_app_requires_both_database_connections ... ok
+test_failed_mongo_publish_is_retryable_and_idempotent ... ok
+
+Ran 9 tests in 0.112s
+OK

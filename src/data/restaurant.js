@@ -115,22 +115,7 @@ export const currentUser = reactive({
   name: '',
   role: validRoles.includes(storedRole) ? storedRole : null,
 })
-export const deliveries = reactive([
-  {
-    id: 'PED-1042',
-    customer: 'Laura Gómez',
-    address: 'Cra. 7 # 72-41, Bogotá',
-    items: 'Burger La Konrad x1, Papas Agrandadas x1',
-    status: 'Listo para recoger',
-  },
-  {
-    id: 'PED-1043',
-    customer: 'Andrés Rojas',
-    address: 'Calle 85 # 12-18, Bogotá',
-    items: 'Hamburguesa Doble Carne x2',
-    status: 'En camino',
-  },
-])
+export const deliveries = reactive([])
 export const cartCount = computed(() =>
   cart.reduce((total, item) => total + item.quantity, 0),
 )
@@ -182,10 +167,9 @@ export function clearCart() {
 }
 
 export function registerDeliveryFromOrder(order) {
-  const deliveryId = `PED-${order.id}`
-  const existingDelivery = deliveries.find((delivery) => delivery.id === deliveryId)
+  const existingDelivery = deliveries.find((delivery) => delivery.id === order.id)
   const delivery = {
-    id: deliveryId,
+    id: order.id,
     customer: order.cliente.nombre,
     address: order.direccion,
     items: order.productos
@@ -198,16 +182,17 @@ export function registerDeliveryFromOrder(order) {
   else deliveries.unshift(delivery)
 }
 
-export function updateDeliveryStatus(deliveryId, status) {
-  const delivery = deliveries.find((entry) => entry.id === deliveryId)
-  if (!delivery) {
-    throw new Error('No se encontró el pedido de entrega.')
-  }
-  if (!['Listo para recoger', 'En camino', 'Entregado'].includes(status)) {
-    throw new Error('El estado de entrega no es válido.')
-  }
-
-  delivery.status = status
+export function syncDeliveriesFromApi(orders) {
+  const syncedDeliveries = orders.map((order) => ({
+    id: order.id,
+    customer: order.cliente.nombre,
+    address: order.direccion,
+    items: order.productos
+      .map((item) => `${item.nombre} x${item.cantidad}`)
+      .join(', '),
+    status: order.estado,
+  }))
+  deliveries.splice(0, deliveries.length, ...syncedDeliveries)
 }
 
 export function addToCart(product) {

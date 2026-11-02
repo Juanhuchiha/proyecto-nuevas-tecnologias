@@ -1,109 +1,20 @@
-from itertools import count
+import logging
+import os
+from datetime import datetime, timezone
+from pathlib import Path
 
+import psycopg
+from dotenv import load_dotenv
 from flask import Flask, jsonify, request
 from flask_cors import CORS
+from pymongo.errors import PyMongoError
 
-app = Flask(__name__)
-CORS(
-    app,
-    resources={
-        r"/*": {
-            "origins": [
-                "http://localhost:5173",
-                "http://127.0.0.1:5173",
-            ]
-        }
-    },
-)
+from backend.persistence import MongoStore, PostgresStore, RequestError, publish_pending_events
 
-productos = [
-    {
-        "id": 1,
-        "nombre": "Burger La Konrad",
-        "precio": 18900,
-        "stock": 18,
-        "categoria": "Hamburguesas",
-        "descripcion": "Carne, queso, lechuga y tomate.",
-        "imagen": "https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=500",
-        "activo": True,
-    },
-    {
-        "id": 2,
-        "nombre": "Hamburguesa Doble Carne",
-        "precio": 24500,
-        "stock": 12,
-        "categoria": "Hamburguesas",
-        "descripcion": "Doble carne, doble queso y salsa de la casa.",
-        "imagen": "https://images.unsplash.com/photo-1586190848861-99aa4a171e90?w=500",
-        "activo": True,
-    },
-    {
-        "id": 3,
-        "nombre": "Hamburguesa de Pollo",
-        "precio": 21900,
-        "stock": 10,
-        "categoria": "Hamburguesas",
-        "descripcion": "Pollo crujiente, lechuga y mayonesa.",
-        "imagen": "https://images.unsplash.com/photo-1606755962773-d324e0a13086?w=500",
-        "activo": True,
-    },
-    {
-        "id": 4,
-        "nombre": "Papas Agrandadas",
-        "precio": 6500,
-        "stock": 24,
-        "categoria": "Acompañamientos",
-        "descripcion": "Porción grande de papas fritas.",
-        "imagen": "https://images.unsplash.com/photo-1573080496219-bb080dd4f877?w=500",
-        "activo": True,
-    },
-    {
-        "id": 5,
-        "nombre": "Nuggets x6",
-        "precio": 10500,
-        "stock": 16,
-        "categoria": "Acompañamientos",
-        "descripcion": "Seis nuggets de pollo con salsa.",
-        "imagen": "https://images.unsplash.com/photo-1562967914-608f82629710?w=500",
-        "activo": True,
-    },
-    {
-        "id": 6,
-        "nombre": "Gaseosa 400ml",
-        "precio": 4000,
-        "stock": 30,
-        "categoria": "Bebidas",
-        "descripcion": "Gaseosa fría de 400 ml.",
-        "imagen": "https://images.unsplash.com/photo-1622483767028-3f66f32aef97?w=500",
-        "activo": True,
-    },
-    {
-        "id": 7,
-        "nombre": "Agua 600ml",
-        "precio": 3500,
-        "stock": 22,
-        "categoria": "Bebidas",
-        "descripcion": "Agua embotellada de 600 ml.",
-        "imagen": "https://images.unsplash.com/photo-1534616042650-80f5c9b61f09?w=500",
-        "activo": True,
-    },
-    {
-        "id": 8,
-        "nombre": "Cono de Helado",
-        "precio": 5000,
-        "stock": 14,
-        "categoria": "Postres",
-        "descripcion": "Cono con helado de vainilla.",
-        "imagen": "https://images.unsplash.com/photo-1560008581-09826d1de69e?w=500",
-        "activo": True,
-    },
-]
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
-usuarios = []
-pedidos = []
-ids_usuario = count(1)
-ids_pedido = count(1)
-ENVIO_COP = 5000
+ORDER_STATUSES = {"Listo para recoger", "En camino", "Entregado"}
+MAX_PAGE_SIZE = 100
 
 
 def json_body():
@@ -113,148 +24,465 @@ def json_body():
     return data, None
 
 
-@app.get("/productos")
-def obtener_productos():
-    return jsonify({"productos": productos})
+def optional_integer(value, field_name):
+    if value is None:
+        return None
+    if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+        raise RequestError(f"El campo '{field_name}' debe ser un entero positivo.", 400)
+    return value
 
 
-@app.post("/usuarios")
-def crear_usuario():
-    data, error = json_body()
-    if error:
-        return error
+def activity_fields(data, partial=False):
+    allowed = {
+        "tipo",
+        "descripcion",
+        "usuario_id",
+        "pedido_id",
+        "datos",
+        "responsable",
+    }
+    unknown = set(data) - allowed
+    if unknown:
+        raise RequestError(
+            "La solicitud contiene campos que no se pueden modificar.",
+            400,
+            {"campos": sorted(unknown)},
+        )
 
-    nombre = data.get("nombre")
-    correo = data.get("correo")
-    if not isinstance(nombre, str) or not nombre.strip():
-        return jsonify({"error": "El campo 'nombre' es obligatorio."}), 400
-    if not isinstance(correo, str) or "@" not in correo:
-        return jsonify({"error": "Ingresa un correo válido en el campo 'correo'."}), 400
+    fields = {}
+    for key in ("tipo", "descripcion"):
+        if key in data:
+            value = data[key]
+            if not isinstance(value, str) or not value.strip():
+                raise RequestError(f"El campo '{key}' debe ser texto no vacío.", 400)
+            fields[key] = value.strip()
+        elif not partial:
+            raise RequestError(f"El campo '{key}' es obligatorio.", 400)
 
-    correo = correo.strip().lower()
-    usuario = next((item for item in usuarios if item["correo"] == correo), None)
-    if usuario is None:
-        usuario = {
-            "id": next(ids_usuario),
-            "nombre": nombre.strip(),
-            "correo": correo,
-            "direccion": data.get("direccion", ""),
-        }
-        usuarios.append(usuario)
-        status_code = 201
-    else:
-        usuario["nombre"] = nombre.strip()
-        usuario["direccion"] = data.get("direccion", usuario["direccion"])
-        status_code = 200
+    for key in ("usuario_id", "pedido_id"):
+        if key in data:
+            fields[key] = optional_integer(data[key], key)
+        elif not partial:
+            fields[key] = None
 
-    return jsonify({"usuario": usuario}), status_code
+    if "datos" in data:
+        if not isinstance(data["datos"], dict):
+            raise RequestError("El campo 'datos' debe ser un objeto JSON.", 400)
+        fields["datos"] = data["datos"]
+    elif not partial:
+        fields["datos"] = {}
+
+    if "responsable" in data:
+        responsible = data["responsable"]
+        if not isinstance(responsible, str) or not responsible.strip():
+            raise RequestError("El campo 'responsable' debe ser texto no vacío.", 400)
+        fields["responsable"] = responsible.strip()
+    elif not partial:
+        fields["responsable"] = "No identificado"
+
+    return fields
 
 
-@app.post("/pedidos")
-def crear_pedido():
-    data, error = json_body()
-    if error:
-        return error
+def validate_references(postgres, fields):
+    user_id = fields.get("usuario_id")
+    if user_id is not None and not postgres.user_exists(user_id):
+        raise RequestError("No existe el usuario indicado.", 404)
+    order_id = fields.get("pedido_id")
+    if order_id is not None and postgres.get_order(order_id) is None:
+        raise RequestError("No existe el pedido indicado.", 404)
 
-    usuario_id = data.get("usuario_id")
-    lineas_recibidas = data.get("productos")
-    if not isinstance(usuario_id, int) or isinstance(usuario_id, bool):
-        return jsonify({"error": "El campo 'usuario_id' debe ser un entero."}), 400
-    usuario = next((item for item in usuarios if item["id"] == usuario_id), None)
-    if usuario is None:
-        return jsonify({"error": "No existe el usuario indicado."}), 404
-    if not isinstance(lineas_recibidas, list) or not lineas_recibidas:
-        return jsonify({"error": "El pedido debe incluir al menos un producto."}), 400
 
-    cantidades = {}
-    for linea in lineas_recibidas:
-        if not isinstance(linea, dict):
-            return jsonify({"error": "Cada producto debe ser un objeto."}), 400
-        producto_id = linea.get("producto_id")
-        cantidad = linea.get("cantidad")
-        if (
-            not isinstance(producto_id, int)
-            or isinstance(producto_id, bool)
-            or not isinstance(cantidad, int)
-            or isinstance(cantidad, bool)
-            or cantidad < 1
-        ):
-            return jsonify(
-                {"error": "Cada producto necesita 'producto_id' y una 'cantidad' entera mayor a cero."}
-            ), 400
-        cantidades[producto_id] = cantidades.get(producto_id, 0) + cantidad
+def create_app(settings=None, postgres=None, mongo=None):
+    app = Flask(__name__)
+    app.config.update(settings or {})
+    CORS(
+        app,
+        resources={
+            r"/*": {
+                "origins": [
+                    origin.strip()
+                    for origin in os.getenv(
+                        "CORS_ORIGINS",
+                        "http://localhost:5173,http://127.0.0.1:5173",
+                    ).split(",")
+                    if origin.strip()
+                ]
+            }
+        },
+    )
 
-    lineas_pedido = []
-    subtotal = 0
-    for producto_id, cantidad in cantidades.items():
-        producto = next((item for item in productos if item["id"] == producto_id), None)
-        if producto is None:
-            return jsonify({"error": f"No existe el producto con id {producto_id}."}), 404
-        if not producto["activo"]:
-            return jsonify({"error": f"El producto '{producto['nombre']}' no está disponible."}), 409
-        if cantidad > producto["stock"]:
-            return jsonify(
-                {
-                    "error": f"Stock insuficiente para '{producto['nombre']}'.",
-                    "stock_disponible": producto["stock"],
-                }
-            ), 409
+    mongo_client = None
+    if postgres is None and mongo is None:
+        database_url = os.getenv("DATABASE_URL")
+        mongodb_uri = os.getenv("MONGODB_URI")
+        missing = [
+            name
+            for name, value in (
+                ("DATABASE_URL", database_url),
+                ("MONGODB_URI", mongodb_uri),
+            )
+            if not value
+        ]
+        if missing:
+            raise RuntimeError(
+                "Faltan variables de entorno requeridas: "
+                + ", ".join(missing)
+                + ". Configúralas a partir de .env.example."
+            )
 
-        total_linea = producto["precio"] * cantidad
-        subtotal += total_linea
-        lineas_pedido.append(
+        postgres = PostgresStore(database_url)
+        mongo_client = MongoStore(
+            mongodb_uri, os.getenv("MONGODB_DATABASE", "mesa_roja")
+        )
+        try:
+            postgres.initialize()
+            mongo_client.check_connection()
+        except (psycopg.Error, PyMongoError):
+            mongo_client.close()
+            raise
+        mongo = mongo_client
+    elif postgres is None or mongo is None:
+        raise ValueError("Las dependencias de PostgreSQL y MongoDB deben configurarse juntas.")
+
+    app.extensions["postgres_store"] = postgres
+    app.extensions["mongo_store"] = mongo
+    app.extensions["mongo_client"] = mongo_client
+
+    @app.errorhandler(RequestError)
+    def handle_request_error(error):
+        return jsonify({"error": error.message, **error.details}), error.status_code
+
+    @app.errorhandler(psycopg.Error)
+    def handle_postgres_error(error):
+        app.logger.exception("Error al operar con PostgreSQL")
+        return jsonify({"error": "No se pudo completar la operación en PostgreSQL."}), 503
+
+    @app.errorhandler(PyMongoError)
+    def handle_mongo_error(error):
+        app.logger.exception("Error al operar con MongoDB")
+        return jsonify({"error": "No se pudo completar la operación en MongoDB."}), 503
+
+    @app.get("/salud")
+    def health():
+        with postgres.connect():
+            pass
+        mongo.client.admin.command("ping")
+        return jsonify(
             {
-                "producto_id": producto_id,
-                "nombre": producto["nombre"],
-                "cantidad": cantidad,
-                "precio_unitario": producto["precio"],
-                "total": total_linea,
+                "estado": "ok",
+                "postgresql": "conectado",
+                "mongodb": "conectado",
+                "eventos_pendientes": postgres.pending_event_count(),
             }
         )
 
-    direccion = data.get("direccion") or usuario["direccion"]
-    envio = ENVIO_COP
-    pedido = {
-        "id": next(ids_pedido),
-        "usuario_id": usuario_id,
-        "cliente": usuario,
-        "direccion": direccion,
-        "productos": lineas_pedido,
-        "subtotal": subtotal,
-        "envio": envio,
-        "total": subtotal + envio,
-        "moneda": "COP",
-        "estado": "Listo para recoger",
-    }
+    @app.get("/productos")
+    def obtener_productos():
+        return jsonify({"productos": postgres.list_products()})
 
-    for linea in lineas_pedido:
-        producto = next(item for item in productos if item["id"] == linea["producto_id"])
-        producto["stock"] -= linea["cantidad"]
-        linea["stock_restante"] = producto["stock"]
+    @app.post("/usuarios")
+    def crear_usuario():
+        data, error = json_body()
+        if error:
+            return error
 
-    pedidos.append(pedido)
-    return jsonify({"pedido": pedido}), 201
+        name = data.get("nombre")
+        email = data.get("correo")
+        address = data.get("direccion", "")
+        if not isinstance(name, str) or not name.strip():
+            return jsonify({"error": "El campo 'nombre' es obligatorio."}), 400
+        if not isinstance(email, str) or "@" not in email:
+            return jsonify({"error": "Ingresa un correo válido en el campo 'correo'."}), 400
+        if not isinstance(address, str):
+            return jsonify({"error": "El campo 'direccion' debe ser texto."}), 400
 
+        user, status = postgres.create_or_update_user(
+            name.strip(), email.strip().lower(), address
+        )
+        return jsonify({"usuario": user}), status
 
-@app.get("/pedidos/<int:id_pedido>")
-def obtener_pedido(id_pedido):
-    pedido = next((item for item in pedidos if item["id"] == id_pedido), None)
-    if pedido is None:
-        return jsonify({"error": "No se encontró el pedido."}), 404
-    return jsonify({"pedido": pedido})
+    @app.post("/pedidos")
+    def crear_pedido():
+        data, error = json_body()
+        if error:
+            return error
 
+        user_id = data.get("usuario_id")
+        if not isinstance(user_id, int) or isinstance(user_id, bool):
+            return jsonify({"error": "El campo 'usuario_id' debe ser un entero."}), 400
+        requested_items = data.get("productos")
+        if not isinstance(requested_items, list) or not requested_items:
+            return jsonify({"error": "El pedido debe incluir al menos un producto."}), 400
 
-@app.get("/reportes/ventas")
-def reporte_ventas():
-    total_ventas = sum(pedido["total"] for pedido in pedidos)
-    return jsonify(
-        {
-            "cantidad_pedidos": len(pedidos),
-            "total_ventas": total_ventas,
-            "moneda": "COP",
+        quantities = {}
+        for item in requested_items:
+            if not isinstance(item, dict):
+                return jsonify({"error": "Cada producto debe ser un objeto."}), 400
+            product_id = item.get("producto_id")
+            quantity = item.get("cantidad")
+            if (
+                not isinstance(product_id, int)
+                or isinstance(product_id, bool)
+                or not isinstance(quantity, int)
+                or isinstance(quantity, bool)
+                or quantity < 1
+            ):
+                return jsonify(
+                    {
+                        "error": (
+                            "Cada producto necesita 'producto_id' y una 'cantidad' "
+                            "entera mayor a cero."
+                        )
+                    }
+                ), 400
+            quantities[product_id] = quantities.get(product_id, 0) + quantity
+
+        address = data.get("direccion", "")
+        if not isinstance(address, str):
+            return jsonify({"error": "El campo 'direccion' debe ser texto."}), 400
+        order = postgres.create_order(user_id, address, quantities)
+        pending = _flush_events(postgres, mongo)
+        response = {"pedido": order}
+        if pending:
+            response["advertencia"] = (
+                "El pedido quedó guardado en PostgreSQL; sus eventos están en la "
+                "cola de reintentos y se publicarán cuando MongoDB esté disponible."
+            )
+        return jsonify(response), 201
+
+    @app.get("/pedidos")
+    def listar_pedidos():
+        return jsonify({"pedidos": postgres.list_orders()})
+
+    @app.get("/pedidos/<int:order_id>")
+    def obtener_pedido(order_id):
+        order = postgres.get_order(order_id)
+        if order is None:
+            return jsonify({"error": "No se encontró el pedido."}), 404
+        return jsonify({"pedido": order})
+
+    @app.patch("/pedidos/<int:order_id>/estado")
+    def actualizar_estado_pedido(order_id):
+        data, error = json_body()
+        if error:
+            return error
+        status = data.get("estado")
+        if not isinstance(status, str) or status not in ORDER_STATUSES:
+            return jsonify(
+                {
+                    "error": "El estado debe ser 'Listo para recoger', 'En camino' o 'Entregado'."
+                }
+            ), 400
+        actor = data.get("usuario")
+        if actor is not None and (
+            not isinstance(actor, dict)
+            or not isinstance(actor.get("nombre"), str)
+            or not actor["nombre"].strip()
+        ):
+            return jsonify({"error": "El campo 'usuario' debe incluir un nombre válido."}), 400
+        if actor is not None:
+            actor_id = actor.get("id")
+            if actor_id is not None and (
+                not isinstance(actor_id, int) or isinstance(actor_id, bool) or actor_id < 1
+            ):
+                return jsonify({"error": "El identificador del usuario no es válido."}), 400
+            if actor_id is not None and not postgres.user_exists(actor_id):
+                return jsonify({"error": "No existe el usuario responsable indicado."}), 404
+
+        order = postgres.update_order_status(order_id, status, actor)
+        pending = _flush_events(postgres, mongo)
+        response = {"pedido": order}
+        if pending:
+            response["advertencia"] = (
+                "El cambio quedó guardado en PostgreSQL; el evento se reintentará "
+                "cuando MongoDB esté disponible."
+            )
+        return jsonify(response)
+
+    @app.get("/pedidos/<int:order_id>/historial")
+    def historial_pedido(order_id):
+        order = postgres.get_order(order_id)
+        if order is None:
+            return jsonify({"error": "No se encontró el pedido."}), 404
+
+        pending = _flush_events(postgres, mongo)
+        if pending and postgres.pending_event_count(order_id=order_id):
+            return jsonify(
+                {
+                    "error": (
+                        "El pedido está en PostgreSQL, pero sus eventos aún no se "
+                        "han podido consultar en MongoDB."
+                    )
+                }
+            ), 503
+        events = mongo.order_history(order_id)
+        return jsonify({"pedido": order, **events})
+
+    @app.get("/actividades")
+    def listar_actividades():
+        filters = {}
+        for parameter, field in (("usuario_id", "usuario_id"), ("pedido_id", "pedido_id")):
+            value = request.args.get(parameter)
+            if value is not None:
+                try:
+                    filters[field] = int(value)
+                except ValueError:
+                    raise RequestError(f"El filtro '{parameter}' debe ser un entero.", 400)
+                if filters[field] < 1:
+                    raise RequestError(f"El filtro '{parameter}' debe ser positivo.", 400)
+
+        raw_limit = request.args.get("limite", "50")
+        try:
+            limit = int(raw_limit)
+        except ValueError:
+            raise RequestError("El filtro 'limite' debe ser un entero.", 400)
+        if not 1 <= limit <= MAX_PAGE_SIZE:
+            raise RequestError(
+                f"El filtro 'limite' debe estar entre 1 y {MAX_PAGE_SIZE}.", 400
+            )
+        return jsonify({"actividades": mongo.list_activities(filters, limit)})
+
+    @app.post("/actividades")
+    def crear_actividad():
+        data, error = json_body()
+        if error:
+            return error
+        fields = activity_fields(data)
+        validate_references(postgres, fields)
+        activity = {
+            **fields,
+            "fecha": datetime.now(timezone.utc).isoformat(),
         }
-    )
+        result = mongo.create_activity(activity)
+        try:
+            mongo.log_system_action(
+                "actividad_creada",
+                fields["responsable"],
+                f"Se registró la actividad {result['id']}.",
+                {"actividad_id": result["id"], "tipo_actividad": fields["tipo"]},
+                fields.get("pedido_id"),
+            )
+        except PyMongoError:
+            app.logger.exception(
+                "La actividad %s se guardó, pero falló su registro de auditoría.",
+                result["id"],
+            )
+            return jsonify(
+                {
+                    "error": (
+                        "La actividad se guardó, pero no se pudo registrar la auditoría. "
+                        "Consulta la actividad antes de repetir la solicitud."
+                    ),
+                    "actividad": result,
+                }
+            ), 503
+        return jsonify({"actividad": result}), 201
+
+    @app.get("/actividades/<activity_id>")
+    def obtener_actividad(activity_id):
+        activity = mongo.get_activity(activity_id)
+        if activity is None:
+            return jsonify({"error": "No se encontró la actividad."}), 404
+        return jsonify({"actividad": activity})
+
+    @app.patch("/actividades/<activity_id>")
+    def actualizar_actividad(activity_id):
+        data, error = json_body()
+        if error:
+            return error
+        updates = activity_fields(data, partial=True)
+        if not updates:
+            return jsonify({"error": "Incluye al menos un campo para actualizar."}), 400
+        validate_references(postgres, updates)
+        activity = mongo.update_activity(activity_id, updates)
+        if activity is None:
+            return jsonify({"error": "No se encontró la actividad."}), 404
+        try:
+            mongo.log_system_action(
+                "actividad_actualizada",
+                updates.get("responsable", activity.get("responsable")),
+                f"Se actualizó la actividad {activity_id}.",
+                {"actividad_id": activity_id, "campos": sorted(updates)},
+                activity.get("pedido_id"),
+            )
+        except PyMongoError:
+            app.logger.exception(
+                "La actividad %s se actualizó, pero falló su registro de auditoría.",
+                activity_id,
+            )
+            return jsonify(
+                {
+                    "error": (
+                        "La actividad se actualizó, pero no se pudo registrar la auditoría. "
+                        "Consulta el recurso antes de repetir la solicitud."
+                    ),
+                    "actividad": activity,
+                }
+            ), 503
+        return jsonify({"actividad": activity})
+
+    @app.delete("/actividades/<activity_id>")
+    def eliminar_actividad(activity_id):
+        activity = mongo.get_activity(activity_id)
+        if activity is None:
+            return jsonify({"error": "No se encontró la actividad."}), 404
+        if not mongo.delete_activity(activity_id):
+            return jsonify({"error": "No se encontró la actividad."}), 404
+        responsable = request.args.get("responsable", "No identificado").strip()
+        try:
+            mongo.log_system_action(
+                "actividad_eliminada",
+                responsable or "No identificado",
+                f"Se eliminó la actividad {activity_id}.",
+                {"actividad_id": activity_id},
+                activity.get("pedido_id"),
+            )
+        except PyMongoError:
+            app.logger.exception(
+                "La actividad %s se eliminó, pero falló su registro de auditoría.",
+                activity_id,
+            )
+            return jsonify(
+                {
+                    "error": (
+                        "La actividad se eliminó, pero no se pudo registrar la auditoría."
+                    )
+                }
+            ), 503
+        return jsonify({"mensaje": "Actividad eliminada correctamente."})
+
+    @app.post("/eventos/pendientes/reintentar")
+    def reintentar_eventos():
+        published = 0
+        try:
+            published = publish_pending_events(postgres, mongo)
+            pending_count = postgres.pending_event_count()
+        except psycopg.Error:
+            app.logger.exception("No se pudo procesar la cola de eventos.")
+            return jsonify({"error": "No se pudo consultar la cola de eventos."}), 503
+        return jsonify(
+            {"publicados": published, "pendientes": pending_count}
+        )
+
+    @app.get("/reportes/ventas")
+    def reporte_ventas():
+        return jsonify(postgres.sales_report())
+
+    return app
+
+
+def _flush_events(postgres, mongo):
+    try:
+        publish_pending_events(postgres, mongo)
+        return postgres.pending_event_count() > 0
+    except psycopg.Error:
+        logging.getLogger(__name__).exception(
+            "No se pudo confirmar la publicación de eventos; quedan disponibles para reintento."
+        )
+        return True
 
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=5000, debug=True)
+    create_app().run(
+        host="127.0.0.1", port=int(os.getenv("PORT", "5000")), debug=False
+    )

@@ -47,5 +47,41 @@ export async function createOrder(order) {
   if (!payload.pedido?.id) {
     throw new Error('El servidor no devolvió el pedido creado.')
   }
+  if (payload.advertencia) {
+    payload.pedido.eventWarning = payload.advertencia
+  }
   return payload.pedido
+}
+
+export async function fetchOrders() {
+  const payload = await request('/pedidos')
+  if (!Array.isArray(payload.pedidos)) {
+    throw new Error('La respuesta de pedidos no tiene el formato esperado.')
+  }
+  return payload.pedidos
+}
+
+export async function updateOrderStatus(orderId, status, actorName) {
+  const payload = await request(`/pedidos/${orderId}/estado`, {
+    method: 'PATCH',
+    body: JSON.stringify({
+      estado: status,
+      ...(actorName?.trim() ? { usuario: { nombre: actorName.trim() } } : {}),
+    }),
+  })
+  if (!payload.pedido?.id) {
+    throw new Error('El servidor no devolvió el pedido actualizado.')
+  }
+  return {
+    ...payload.pedido,
+    eventWarning: payload.advertencia || '',
+  }
+}
+
+export async function fetchOrderHistory(orderId) {
+  const payload = await request(`/pedidos/${orderId}/historial`)
+  if (!payload.pedido || !Array.isArray(payload.historial)) {
+    throw new Error('La respuesta del historial no tiene el formato esperado.')
+  }
+  return payload
 }
