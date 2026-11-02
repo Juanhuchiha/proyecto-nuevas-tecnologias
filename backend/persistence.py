@@ -1,15 +1,15 @@
+import json
 import logging
+import sqlite3
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
-import psycopg
-from psycopg.rows import dict_row
-from psycopg.types.json import Jsonb
-from pymongo import ASCENDING, DESCENDING, MongoClient, ReturnDocument
-from pymongo.errors import DuplicateKeyError, PyMongoError
 from bson import ObjectId
 from bson.errors import InvalidId
+from pymongo import ASCENDING, DESCENDING, MongoClient, ReturnDocument
+from pymongo.errors import DuplicateKeyError, PyMongoError
 
 from backend.catalog import PRODUCTS
 
@@ -25,31 +25,62 @@ class RequestError(Exception):
         self.details = details or {}
 
 
-class PostgresStore:
-    def __init__(self, dsn):
-        self.dsn = dsn
+class SQLiteStore:
+    def __init__(self, database_path=None):
+        self.database_path = Path(
+            database_path
+            or Path(__file__).with_name("data") / "mesa_roja.db"
+        ).expanduser().resolve()
 
-    def connect(self):
-        return psycopg.connect(self.dsn, row_factory=dict_row, connect_timeout=5)
+    @contextmanager
+    def connect(self, write=False):
+        self.database_path.parent.mkdir(parents=True, exist_ok=True)
+        connection = sqlite3.connect(
+            str(self.database_path),
+            timeout=10,
+            isolation_level=None,
+        )
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("PRAGMA busy_timeout = 10000")
+        try:
+            if write:
+                connection.execute("BEGIN IMMEDIATE")
+            yield connection
+            if connection.in_transaction:
+                connection.commit()
+        except Exception:
+            if connection.in_transaction:
+                connection.rollback()
+            raise
+        finally:
+            connection.close()
 
     def initialize(self):
         schema_path = Path(__file__).with_name("schema.sql")
         with self.connect() as connection:
-            schema = schema_path.read_text(encoding="utf-8")
-            for statement in schema.split(";"):
-                if statement.strip():
-                    connection.execute(statement)
+            connection.executescript(schema_path.read_text(encoding="utf-8"))
+        with self.connect(write=True) as connection:
             connection.executemany(
                 """
                 INSERT INTO productos
                     (id, nombre, precio, stock, categoria, descripcion, imagen, activo)
                 VALUES
-                    (%(id)s, %(nombre)s, %(precio)s, %(stock)s, %(categoria)s,
-                     %(descripcion)s, %(imagen)s, %(activo)s)
+                    (:id, :nombre, :precio, :stock, :categoria, :descripcion, :imagen,
+                     :activo)
                 ON CONFLICT (id) DO NOTHING
                 """,
-                PRODUCTS,
+                [
+                    {**product, "activo": int(product["activo"])}
+                    for product in PRODUCTS
+                ],
             )
+
+    @staticmethod
+    def _product(row):
+        result = dict(row)
+        result["activo"] = bool(result["activo"])
+        return result
 
     def list_products(self):
         with self.connect() as connection:
@@ -59,33 +90,35 @@ class PostgresStore:
                 FROM productos ORDER BY id
                 """
             ).fetchall()
-        return [dict(row) for row in rows]
+        return [self._product(row) for row in rows]
 
     def create_or_update_user(self, name, email, address):
-        with self.connect() as connection:
+        with self.connect(write=True) as connection:
+            existing = connection.execute(
+                "SELECT id FROM usuarios WHERE correo = ?", (email,)
+            ).fetchone()
             row = connection.execute(
                 """
                 INSERT INTO usuarios (nombre, correo, direccion)
-                VALUES (%s, %s, %s)
+                VALUES (?, ?, ?)
                 ON CONFLICT (correo) DO UPDATE
-                    SET nombre = EXCLUDED.nombre, direccion = EXCLUDED.direccion
-                RETURNING id, nombre, correo, direccion, (xmax = 0) AS creado
+                    SET nombre = excluded.nombre, direccion = excluded.direccion
+                RETURNING id, nombre, correo, direccion
                 """,
                 (name, email, address),
             ).fetchone()
-        user = {key: row[key] for key in ("id", "nombre", "correo", "direccion")}
-        return user, 201 if row["creado"] else 200
+        return dict(row), 200 if existing else 201
 
     def user_exists(self, user_id):
         with self.connect() as connection:
             return connection.execute(
-                "SELECT 1 FROM usuarios WHERE id = %s", (user_id,)
+                "SELECT 1 FROM usuarios WHERE id = ?", (user_id,)
             ).fetchone() is not None
 
     def create_order(self, user_id, address, quantities):
-        with self.connect() as connection:
+        with self.connect(write=True) as connection:
             user = connection.execute(
-                "SELECT id, nombre, correo, direccion FROM usuarios WHERE id = %s FOR SHARE",
+                "SELECT id, nombre, correo, direccion FROM usuarios WHERE id = ?",
                 (user_id,),
             ).fetchone()
             if user is None:
@@ -94,11 +127,12 @@ class PostgresStore:
             products = connection.execute(
                 """
                 SELECT id, nombre, precio, stock, activo
-                FROM productos WHERE id = ANY(%s) ORDER BY id FOR UPDATE
-                """,
-                (list(quantities),),
+                FROM productos WHERE id IN ({})
+                ORDER BY id
+                """.format(",".join("?" for _ in quantities)),
+                tuple(quantities),
             ).fetchall()
-            products_by_id = {row["id"]: row for row in products}
+            products_by_id = {row["id"]: self._product(row) for row in products}
             line_items = []
             subtotal = 0
 
@@ -131,20 +165,21 @@ class PostgresStore:
 
             destination = address or user["direccion"]
             shipping = ENVIO_COP
-            order_row = connection.execute(
+            created_at = datetime.now(timezone.utc).isoformat()
+            cursor = connection.execute(
                 """
                 INSERT INTO pedidos
-                    (usuario_id, direccion, subtotal, envio, total, moneda, estado)
-                VALUES (%s, %s, %s, %s, %s, 'COP', 'Listo para recoger')
-                RETURNING id, creado_en
+                    (usuario_id, direccion, subtotal, envio, total, moneda, estado,
+                     creado_en)
+                VALUES (?, ?, ?, ?, ?, 'COP', 'Listo para recoger', ?)
                 """,
-                (user_id, destination, subtotal, shipping, subtotal + shipping),
-            ).fetchone()
-            order_id = order_row["id"]
+                (user_id, destination, subtotal, shipping, subtotal + shipping, created_at),
+            )
+            order_id = cursor.lastrowid
 
             for item in line_items:
                 connection.execute(
-                    "UPDATE productos SET stock = %s WHERE id = %s",
+                    "UPDATE productos SET stock = ? WHERE id = ?",
                     (item["stock_restante"], item["producto_id"]),
                 )
                 connection.execute(
@@ -152,7 +187,7 @@ class PostgresStore:
                     INSERT INTO detalles_pedido
                         (pedido_id, producto_id, nombre, cantidad, precio_unitario,
                          total, stock_restante)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         order_id,
@@ -165,13 +200,13 @@ class PostgresStore:
                     ),
                 )
 
-            created_at = order_row["creado_en"].isoformat()
             initial_status = "Listo para recoger"
             self._enqueue(
                 connection,
                 "historial_pedidos",
                 {
                     "pedido_id": order_id,
+                    "usuario_id": user_id,
                     "estado_anterior": None,
                     "estado_nuevo": initial_status,
                     "usuario": {"id": user_id, "nombre": user["nombre"]},
@@ -185,6 +220,7 @@ class PostgresStore:
                 "registros_sistema",
                 {
                     "pedido_id": order_id,
+                    "usuario_id": user_id,
                     "tipo": "pedido_creado",
                     "usuario": {"id": user_id, "nombre": user["nombre"]},
                     "descripcion": f"Se creó el pedido {order_id}.",
@@ -210,12 +246,21 @@ class PostgresStore:
     @staticmethod
     def _enqueue(connection, collection, document):
         connection.execute(
-            "INSERT INTO cola_eventos (id, coleccion, documento) VALUES (%s, %s, %s)",
-            (uuid.uuid4(), collection, Jsonb(document)),
+            """
+            INSERT INTO cola_eventos
+                (id, coleccion, documento, fecha_creacion)
+            VALUES (?, ?, ?, ?)
+            """,
+            (
+                str(uuid.uuid4()),
+                collection,
+                json.dumps(document, ensure_ascii=False),
+                datetime.now(timezone.utc).isoformat(),
+            ),
         )
 
     def get_order(self, order_id):
-        orders = self._get_orders("WHERE p.id = %s", (order_id,))
+        orders = self._get_orders("WHERE p.id = ?", (order_id,))
         return orders[0] if orders else None
 
     def list_orders(self):
@@ -239,14 +284,15 @@ class PostgresStore:
                 return []
 
             order_ids = [row["id"] for row in rows]
+            placeholders = ",".join("?" for _ in order_ids)
             details = connection.execute(
-                """
+                f"""
                 SELECT pedido_id, producto_id, nombre, cantidad, precio_unitario,
                        total, stock_restante
-                FROM detalles_pedido WHERE pedido_id = ANY(%s)
+                FROM detalles_pedido WHERE pedido_id IN ({placeholders})
                 ORDER BY id
                 """,
-                (order_ids,),
+                order_ids,
             ).fetchall()
 
         items_by_order = {order_id: [] for order_id in order_ids}
@@ -284,17 +330,17 @@ class PostgresStore:
                 "direccion": row["cliente_direccion"],
             }
             order["productos"] = items_by_order[row["id"]]
-            order["creado_en"] = row["creado_en"].isoformat()
+            order["creado_en"] = row["creado_en"]
             result.append(order)
         return result
 
     def update_order_status(self, order_id, new_status, actor):
-        with self.connect() as connection:
+        with self.connect(write=True) as connection:
             row = connection.execute(
                 """
                 SELECT p.estado, p.usuario_id, u.nombre AS cliente_nombre
                 FROM pedidos AS p JOIN usuarios AS u ON u.id = p.usuario_id
-                WHERE p.id = %s FOR UPDATE OF p
+                WHERE p.id = ?
                 """,
                 (order_id,),
             ).fetchone()
@@ -302,20 +348,21 @@ class PostgresStore:
                 raise RequestError("No se encontró el pedido.", 404)
 
             if row["estado"] != new_status:
-                updated = connection.execute(
-                    """
-                    UPDATE pedidos SET estado = %s
-                    WHERE id = %s RETURNING NOW() AS actualizado_en
-                    """,
+                event_time = datetime.now(timezone.utc).isoformat()
+                event_user = actor or {
+                    "id": row["usuario_id"],
+                    "nombre": row["cliente_nombre"],
+                }
+                connection.execute(
+                    "UPDATE pedidos SET estado = ? WHERE id = ?",
                     (new_status, order_id),
-                ).fetchone()
-                event_time = updated["actualizado_en"].isoformat()
-                event_user = actor
+                )
                 self._enqueue(
                     connection,
                     "historial_pedidos",
                     {
                         "pedido_id": order_id,
+                        "usuario_id": row["usuario_id"],
                         "estado_anterior": row["estado"],
                         "estado_nuevo": new_status,
                         "usuario": event_user,
@@ -329,8 +376,9 @@ class PostgresStore:
                     "registros_sistema",
                     {
                         "pedido_id": order_id,
+                        "usuario_id": row["usuario_id"],
                         "tipo": "estado_pedido_actualizado",
-                        "usuario": event_user or {"nombre": "No identificado"},
+                        "usuario": event_user,
                         "descripcion": (
                             f"El pedido {order_id} cambió de "
                             f"'{row['estado']}' a '{new_status}'."
@@ -347,35 +395,43 @@ class PostgresStore:
 
     def pending_events(self, limit=100):
         with self.connect() as connection:
-            return connection.execute(
+            rows = connection.execute(
                 """
                 SELECT id, coleccion, documento FROM cola_eventos
-                WHERE publicado_en IS NULL ORDER BY creado_en
-                LIMIT %s
+                WHERE publicado_en IS NULL ORDER BY fecha_creacion
+                LIMIT ?
                 """,
                 (limit,),
             ).fetchall()
+        return [
+            {
+                "id": row["id"],
+                "coleccion": row["coleccion"],
+                "documento": json.loads(row["documento"]),
+            }
+            for row in rows
+        ]
 
     def mark_event_published(self, event_id):
-        with self.connect() as connection:
+        with self.connect(write=True) as connection:
             connection.execute(
                 """
                 UPDATE cola_eventos
-                SET publicado_en = NOW(), ultimo_error = NULL
-                WHERE id = %s AND publicado_en IS NULL
+                SET publicado_en = ?, error = NULL
+                WHERE id = ? AND publicado_en IS NULL
                 """,
-                (event_id,),
+                (datetime.now(timezone.utc).isoformat(), str(event_id)),
             )
 
     def mark_event_failed(self, event_id, error):
-        with self.connect() as connection:
+        with self.connect(write=True) as connection:
             connection.execute(
                 """
                 UPDATE cola_eventos
-                SET intentos = intentos + 1, ultimo_error = %s
-                WHERE id = %s AND publicado_en IS NULL
+                SET intentos = intentos + 1, error = ?
+                WHERE id = ? AND publicado_en IS NULL
                 """,
-                (error[:1000], event_id),
+                (error[:1000], str(event_id)),
             )
 
     def pending_event_count(self, order_id=None):
@@ -384,16 +440,17 @@ class PostgresStore:
                 row = connection.execute(
                     "SELECT COUNT(*) AS total FROM cola_eventos WHERE publicado_en IS NULL"
                 ).fetchone()
-            else:
-                row = connection.execute(
-                    """
-                    SELECT COUNT(*) AS total FROM cola_eventos
-                    WHERE publicado_en IS NULL
-                      AND documento->>'pedido_id' = %s
-                    """,
-                    (str(order_id),),
-                ).fetchone()
-        return row["total"]
+                return row["total"]
+
+            rows = connection.execute(
+                """
+                SELECT documento FROM cola_eventos
+                WHERE publicado_en IS NULL
+                """
+            ).fetchall()
+        return sum(
+            json.loads(row["documento"]).get("pedido_id") == order_id for row in rows
+        )
 
     def sales_report(self):
         with self.connect() as connection:
@@ -428,6 +485,12 @@ class MongoStore:
             [("pedido_id", ASCENDING), ("fecha", DESCENDING)]
         )
         self.database["actividades_usuarios"].create_index(
+            [("pedido_id", ASCENDING), ("fecha", DESCENDING)]
+        )
+        self.database["actividades_usuarios"].create_index(
+            [("usuario_id", ASCENDING), ("fecha", DESCENDING)]
+        )
+        self.database["registros_sistema"].create_index(
             [("pedido_id", ASCENDING), ("fecha", DESCENDING)]
         )
 
@@ -525,21 +588,21 @@ class MongoStore:
         self.client.close()
 
 
-def publish_pending_events(postgres, mongo):
+def publish_pending_events(sqlite_store, mongo):
     published = 0
-    for event in postgres.pending_events():
+    for event in sqlite_store.pending_events():
         event_id = event["id"]
         try:
             mongo.publish_outbox_event(
                 event_id, event["coleccion"], event["documento"]
             )
         except PyMongoError as error:
-            postgres.mark_event_failed(event_id, str(error))
+            sqlite_store.mark_event_failed(event_id, str(error))
             logger.exception(
                 "No se pudo publicar el evento %s en MongoDB; queda pendiente de reintento.",
                 event_id,
             )
             continue
-        postgres.mark_event_published(event_id)
+        sqlite_store.mark_event_published(event_id)
         published += 1
     return published

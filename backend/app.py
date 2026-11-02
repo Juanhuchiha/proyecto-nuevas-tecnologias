@@ -1,15 +1,20 @@
 import logging
 import os
+import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-import psycopg
 from dotenv import load_dotenv
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from pymongo.errors import PyMongoError
 
-from backend.persistence import MongoStore, PostgresStore, RequestError, publish_pending_events
+from backend.persistence import (
+    MongoStore,
+    RequestError,
+    SQLiteStore,
+    publish_pending_events,
+)
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
@@ -83,16 +88,16 @@ def activity_fields(data, partial=False):
     return fields
 
 
-def validate_references(postgres, fields):
+def validate_references(sqlite_store, fields):
     user_id = fields.get("usuario_id")
-    if user_id is not None and not postgres.user_exists(user_id):
+    if user_id is not None and not sqlite_store.user_exists(user_id):
         raise RequestError("No existe el usuario indicado.", 404)
     order_id = fields.get("pedido_id")
-    if order_id is not None and postgres.get_order(order_id) is None:
+    if order_id is not None and sqlite_store.get_order(order_id) is None:
         raise RequestError("No existe el pedido indicado.", 404)
 
 
-def create_app(settings=None, postgres=None, mongo=None):
+def create_app(settings=None, sqlite_store=None, mongo=None):
     app = Flask(__name__)
     app.config.update(settings or {})
     CORS(
@@ -112,39 +117,32 @@ def create_app(settings=None, postgres=None, mongo=None):
     )
 
     mongo_client = None
-    if postgres is None and mongo is None:
-        database_url = os.getenv("DATABASE_URL")
+    if sqlite_store is None and mongo is None:
         mongodb_uri = os.getenv("MONGODB_URI")
-        missing = [
-            name
-            for name, value in (
-                ("DATABASE_URL", database_url),
-                ("MONGODB_URI", mongodb_uri),
-            )
-            if not value
-        ]
-        if missing:
+        if not mongodb_uri:
             raise RuntimeError(
-                "Faltan variables de entorno requeridas: "
-                + ", ".join(missing)
-                + ". Configúralas a partir de .env.example."
+                "Falta la variable de entorno MONGODB_URI. "
+                "Configúrala a partir de .env.example."
             )
 
-        postgres = PostgresStore(database_url)
+        sqlite_store = SQLiteStore(
+            app.config.get("SQLITE_DATABASE_PATH")
+            or os.getenv("SQLITE_DATABASE_PATH")
+        )
         mongo_client = MongoStore(
             mongodb_uri, os.getenv("MONGODB_DATABASE", "mesa_roja")
         )
         try:
-            postgres.initialize()
+            sqlite_store.initialize()
             mongo_client.check_connection()
-        except (psycopg.Error, PyMongoError):
+        except (sqlite3.Error, PyMongoError):
             mongo_client.close()
             raise
         mongo = mongo_client
-    elif postgres is None or mongo is None:
-        raise ValueError("Las dependencias de PostgreSQL y MongoDB deben configurarse juntas.")
+    elif sqlite_store is None or mongo is None:
+        raise ValueError("Las dependencias de SQLite y MongoDB deben configurarse juntas.")
 
-    app.extensions["postgres_store"] = postgres
+    app.extensions["sqlite_store"] = sqlite_store
     app.extensions["mongo_store"] = mongo
     app.extensions["mongo_client"] = mongo_client
 
@@ -152,10 +150,10 @@ def create_app(settings=None, postgres=None, mongo=None):
     def handle_request_error(error):
         return jsonify({"error": error.message, **error.details}), error.status_code
 
-    @app.errorhandler(psycopg.Error)
-    def handle_postgres_error(error):
-        app.logger.exception("Error al operar con PostgreSQL")
-        return jsonify({"error": "No se pudo completar la operación en PostgreSQL."}), 503
+    @app.errorhandler(sqlite3.Error)
+    def handle_sqlite_error(error):
+        app.logger.exception("Error al operar con SQLite")
+        return jsonify({"error": "No se pudo completar la operación en SQLite."}), 503
 
     @app.errorhandler(PyMongoError)
     def handle_mongo_error(error):
@@ -164,21 +162,21 @@ def create_app(settings=None, postgres=None, mongo=None):
 
     @app.get("/salud")
     def health():
-        with postgres.connect():
+        with sqlite_store.connect():
             pass
         mongo.client.admin.command("ping")
         return jsonify(
             {
                 "estado": "ok",
-                "postgresql": "conectado",
+                "sqlite": "conectado",
                 "mongodb": "conectado",
-                "eventos_pendientes": postgres.pending_event_count(),
+                "eventos_pendientes": sqlite_store.pending_event_count(),
             }
         )
 
     @app.get("/productos")
     def obtener_productos():
-        return jsonify({"productos": postgres.list_products()})
+        return jsonify({"productos": sqlite_store.list_products()})
 
     @app.post("/usuarios")
     def crear_usuario():
@@ -196,7 +194,7 @@ def create_app(settings=None, postgres=None, mongo=None):
         if not isinstance(address, str):
             return jsonify({"error": "El campo 'direccion' debe ser texto."}), 400
 
-        user, status = postgres.create_or_update_user(
+        user, status = sqlite_store.create_or_update_user(
             name.strip(), email.strip().lower(), address
         )
         return jsonify({"usuario": user}), status
@@ -240,23 +238,23 @@ def create_app(settings=None, postgres=None, mongo=None):
         address = data.get("direccion", "")
         if not isinstance(address, str):
             return jsonify({"error": "El campo 'direccion' debe ser texto."}), 400
-        order = postgres.create_order(user_id, address, quantities)
-        pending = _flush_events(postgres, mongo)
+        order = sqlite_store.create_order(user_id, address, quantities)
+        pending = _flush_events(sqlite_store, mongo)
         response = {"pedido": order}
         if pending:
             response["advertencia"] = (
-                "El pedido quedó guardado en PostgreSQL; sus eventos están en la "
+                "El pedido quedó guardado en SQLite; sus eventos están en la "
                 "cola de reintentos y se publicarán cuando MongoDB esté disponible."
             )
         return jsonify(response), 201
 
     @app.get("/pedidos")
     def listar_pedidos():
-        return jsonify({"pedidos": postgres.list_orders()})
+        return jsonify({"pedidos": sqlite_store.list_orders()})
 
     @app.get("/pedidos/<int:order_id>")
     def obtener_pedido(order_id):
-        order = postgres.get_order(order_id)
+        order = sqlite_store.get_order(order_id)
         if order is None:
             return jsonify({"error": "No se encontró el pedido."}), 404
         return jsonify({"pedido": order})
@@ -286,31 +284,31 @@ def create_app(settings=None, postgres=None, mongo=None):
                 not isinstance(actor_id, int) or isinstance(actor_id, bool) or actor_id < 1
             ):
                 return jsonify({"error": "El identificador del usuario no es válido."}), 400
-            if actor_id is not None and not postgres.user_exists(actor_id):
+            if actor_id is not None and not sqlite_store.user_exists(actor_id):
                 return jsonify({"error": "No existe el usuario responsable indicado."}), 404
 
-        order = postgres.update_order_status(order_id, status, actor)
-        pending = _flush_events(postgres, mongo)
+        order = sqlite_store.update_order_status(order_id, status, actor)
+        pending = _flush_events(sqlite_store, mongo)
         response = {"pedido": order}
         if pending:
             response["advertencia"] = (
-                "El cambio quedó guardado en PostgreSQL; el evento se reintentará "
+                "El cambio quedó guardado en SQLite; el evento se reintentará "
                 "cuando MongoDB esté disponible."
             )
         return jsonify(response)
 
     @app.get("/pedidos/<int:order_id>/historial")
     def historial_pedido(order_id):
-        order = postgres.get_order(order_id)
+        order = sqlite_store.get_order(order_id)
         if order is None:
             return jsonify({"error": "No se encontró el pedido."}), 404
 
-        pending = _flush_events(postgres, mongo)
-        if pending and postgres.pending_event_count(order_id=order_id):
+        pending = _flush_events(sqlite_store, mongo)
+        if pending and sqlite_store.pending_event_count(order_id=order_id):
             return jsonify(
                 {
                     "error": (
-                        "El pedido está en PostgreSQL, pero sus eventos aún no se "
+                        "El pedido está en SQLite, pero sus eventos aún no se "
                         "han podido consultar en MongoDB."
                     )
                 }
@@ -348,7 +346,7 @@ def create_app(settings=None, postgres=None, mongo=None):
         if error:
             return error
         fields = activity_fields(data)
-        validate_references(postgres, fields)
+        validate_references(sqlite_store, fields)
         activity = {
             **fields,
             "fecha": datetime.now(timezone.utc).isoformat(),
@@ -393,7 +391,7 @@ def create_app(settings=None, postgres=None, mongo=None):
         updates = activity_fields(data, partial=True)
         if not updates:
             return jsonify({"error": "Incluye al menos un campo para actualizar."}), 400
-        validate_references(postgres, updates)
+        validate_references(sqlite_store, updates)
         activity = mongo.update_activity(activity_id, updates)
         if activity is None:
             return jsonify({"error": "No se encontró la actividad."}), 404
@@ -455,9 +453,9 @@ def create_app(settings=None, postgres=None, mongo=None):
     def reintentar_eventos():
         published = 0
         try:
-            published = publish_pending_events(postgres, mongo)
-            pending_count = postgres.pending_event_count()
-        except psycopg.Error:
+            published = publish_pending_events(sqlite_store, mongo)
+            pending_count = sqlite_store.pending_event_count()
+        except sqlite3.Error:
             app.logger.exception("No se pudo procesar la cola de eventos.")
             return jsonify({"error": "No se pudo consultar la cola de eventos."}), 503
         return jsonify(
@@ -466,16 +464,16 @@ def create_app(settings=None, postgres=None, mongo=None):
 
     @app.get("/reportes/ventas")
     def reporte_ventas():
-        return jsonify(postgres.sales_report())
+        return jsonify(sqlite_store.sales_report())
 
     return app
 
 
-def _flush_events(postgres, mongo):
+def _flush_events(sqlite_store, mongo):
     try:
-        publish_pending_events(postgres, mongo)
-        return postgres.pending_event_count() > 0
-    except psycopg.Error:
+        publish_pending_events(sqlite_store, mongo)
+        return sqlite_store.pending_event_count() > 0
+    except sqlite3.Error:
         logging.getLogger(__name__).exception(
             "No se pudo confirmar la publicación de eventos; quedan disponibles para reintento."
         )

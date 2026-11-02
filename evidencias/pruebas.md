@@ -1,26 +1,29 @@
-# Evidencias de la entrega
+# Evidencias de la entrega SQLite + MongoDB
 
 Fecha de las verificaciones locales: 1 de noviembre de 2026.
 
 ## Resultados ejecutados
 
-- Backend: `python -m compileall -q backend` finalizó sin errores de sintaxis.
-- Pruebas API: `python -m unittest discover -s backend\tests -t .` ejecutó 9 pruebas, todas aprobadas. El registro completo está en [`pruebas_backend.txt`](./pruebas_backend.txt).
-- Frontend: `npm run build` finalizó correctamente. El registro está en [`pruebas_frontend.txt`](./pruebas_frontend.txt).
-- Las pruebas unitarias inyectan adaptadores falsos; validan el contrato de rutas y el mecanismo de reintento, pero no constituyen una prueba de conexión a PostgreSQL o MongoDB.
+- Python: `python -m compileall -q backend` finalizó sin errores de sintaxis.
+- Pruebas API: `python -m unittest discover -s backend\tests -t . -v` ejecutó 10 pruebas. SQLite se probó usando archivos de base temporales reales; los adaptadores de MongoDB para las rutas se simularon. Consulta el registro [`pruebas_backend.txt`](./pruebas_backend.txt).
+- Frontend: `npm run build` finalizó correctamente. Consulta [`pruebas_frontend.txt`](./pruebas_frontend.txt).
+- Las pruebas SQLite verifican la creación de tablas, claves foráneas, datos de demostración, registro y actualización de usuarios, pedidos, descuento de inventario, rollback, reportes y cola de eventos.
+- Las pruebas MongoDB simuladas verifican el CRUD de actividades, el historial combinado, los registros de auditoría y los reintentos; no son pruebas contra un servidor MongoDB real.
 
-## Verificación externa pendiente
+## Integración con MongoDB real pendiente
 
-En el entorno de trabajo no había `DATABASE_URL` ni `MONGODB_URI`; en la comprobación local los puertos PostgreSQL `5432` y MongoDB `27017` tampoco estaban disponibles. Por lo tanto:
+No había `MONGODB_URI` configurada ni un servidor local disponible en el puerto `27017`. Por lo tanto:
 
-- No se afirma que se haya establecido una conexión real a alguna de las bases.
-- No se afirma que las operaciones CRUD se hayan ejecutado contra un clúster o servidor de base de datos real.
-- No se generaron capturas de pantalla de una ejecución con bases reales.
+- No se afirma que la conexión a MongoDB, la creación de índices o el CRUD se haya comprobado contra un clúster o servidor real.
+- No se generaron capturas de una ejecución con MongoDB real.
+- La base SQLite y sus tablas sí fueron creadas y probadas con archivos temporales reales durante las pruebas unitarias.
 
-La prueba [`backend/integration_smoke.py`](../backend/integration_smoke.py) realiza esa comprobación contra las dos bases configuradas y elimina los datos temporales que crea. Para obtener esa evidencia, configura `.env` con bases de prueba y ejecuta:
+Para verificar la conexión y todas las operaciones con tu MongoDB, configura `MONGODB_URI` en un `.env` local y ejecuta:
 
 ```powershell
 python -m backend.integration_smoke
 ```
 
-El informe relacionado directamente con esta implementación está en [`implementacion-mongodb.pdf`](./implementacion-mongodb.pdf).
+La prueba usa una SQLite temporal y limpia los documentos temporales que agrega a MongoDB. Ejecútala contra una base de pruebas, no contra una base con datos de producción.
+
+El informe actualizado y relacionado con esta rama está en [`implementacion-mongodb.pdf`](./implementacion-mongodb.pdf).

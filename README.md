@@ -1,81 +1,58 @@
 # Sistema de Gestión de Pedidos en Línea para Restaurante
 
-Aplicación universitaria para consultar un catálogo, crear pedidos y hacer seguimiento de sus estados. El frontend usa Vue 3 y Vite; la API está construida con Flask. La persistencia combina PostgreSQL para los datos relacionales y MongoDB para los eventos y las actividades.
+Aplicación universitaria para consultar un catálogo, crear pedidos y hacer seguimiento a sus estados. El frontend usa Vue 3, Vue Router, Bootstrap 5 y Vite; la API utiliza Python y Flask. La persistencia combina SQLite para datos relacionales y MongoDB para actividades y eventos flexibles.
 
 ## Arquitectura de persistencia políglota
 
-La copia de partida de este repositorio tenía una API Flask con listas en memoria: no incluía conexión ni esquema de PostgreSQL. Esta entrega conserva sus endpoints y flujo de pedidos, migra sus datos estructurados a PostgreSQL y añade MongoDB para los registros dinámicos.
+- **SQLite** guarda usuarios, catálogo, pedidos, detalles, existencias, ventas y la cola transaccional de eventos. Las tablas y relaciones se crean automáticamente al arrancar Flask. Por defecto, la base se encuentra en `backend/data/mesa_roja.db`.
+- **MongoDB** guarda actividades, historial de estados y registros del sistema. Los documentos contienen campos dinámicos en `datos`.
+- Cuando se crea un pedido o cambia su estado, SQLite guarda el pedido, el inventario y los eventos pendientes en una misma transacción. Después, la API publica los eventos en MongoDB. Si MongoDB está temporalmente indisponible, los eventos permanecen en la cola SQLite y se pueden reintentar sin duplicar documentos.
+- `GET /pedidos/<id>/historial` combina la información del pedido consultada en SQLite con los eventos encontrados en MongoDB.
 
-- **PostgreSQL** guarda usuarios, catálogo, pedidos, detalles, existencias y una cola transaccional de eventos pendientes. Las relaciones, las restricciones y la transacción de compra protegen la integridad del inventario y los pedidos.
-- **MongoDB** guarda actividades de usuarios, historial de estados y registros del sistema. Los documentos aceptan un campo `datos` dinámico para información adicional.
-- Los eventos del pedido se insertan primero en `cola_eventos` dentro de la misma transacción PostgreSQL que crea el pedido o modifica su estado. Después se publican en MongoDB con un identificador idempotente. Si MongoDB no responde, el pedido SQL permanece confirmado y el evento queda pendiente para reintentarse; no se presenta el pedido como perdido ni se duplica al reintentar.
-- `GET /pedidos/<id>/historial` reúne los datos del pedido de PostgreSQL con los eventos de MongoDB en una respuesta JSON.
+SQLite conserva las tablas `usuarios`, `productos`, `pedidos`, `detalles_pedido` y `cola_eventos`, definidas en `backend/schema.sql`. Se activan las claves foráneas en cada conexión; las operaciones de escritura usan transacciones y un tiempo de espera para bloqueos. El catálogo de demostración se inserta si no existe; no se sobrescriben las existencias existentes.
 
-### Esquema relacional
-
-`backend/schema.sql` crea estas tablas:
-
-- `usuarios`: nombre, correo único y dirección.
-- `productos`: catálogo y existencias.
-- `pedidos`: cliente, fecha, dirección, total y estado actual.
-- `detalles_pedido`: productos, cantidades, precios y existencias posteriores a la compra.
-- `cola_eventos`: eventos JSON pendientes de publicar en MongoDB, con intentos y error más reciente.
-
-El backend crea el esquema al iniciar y añade los ocho productos de demostración únicamente si aún no existen. Las compras bloquean las filas de producto durante la comprobación y el descuento del stock.
-
-### Colecciones MongoDB
+Las colecciones MongoDB son:
 
 - `actividades_usuarios`: `usuario_id`, `pedido_id`, `tipo`, `descripcion`, `fecha`, `responsable` y `datos`.
-- `historial_pedidos`: `pedido_id`, `estado_anterior`, `estado_nuevo`, `usuario`, `tipo`, `fecha` y `datos`.
-- `registros_sistema`: `pedido_id` cuando aplica, tipo de acción, usuario responsable, descripción, fecha y datos de la operación.
+- `historial_pedidos`: pedido, estados anterior y nuevo, usuario responsable, fecha y datos.
+- `registros_sistema`: acciones de la aplicación, responsable, descripción, fecha y datos.
 
-MongoDB mantiene índices por pedido y fecha para consultar con rapidez las actividades e historial. Los IDs SQL se guardan como números en `pedido_id` y `usuario_id`; el campo `id` de una actividad es el ObjectId de MongoDB convertido a texto.
+Los IDs de pedidos y usuarios de SQLite se guardan como números en los documentos MongoDB. Las actividades tienen su propio ObjectId. PyMongo crea índices para consultar por pedido, usuario y fecha.
 
 ## Tecnologías
 
-- Vue 3, Vue Router, Bootstrap 5 y Vite.
-- Flask y Flask-CORS.
-- PostgreSQL con Psycopg 3.
-- MongoDB con PyMongo.
-- `python-dotenv` para cargar la configuración local desde `.env`.
-- `unittest` y el cliente de pruebas de Flask para las pruebas automatizadas.
+- Vue.js 3, Vue Router, Bootstrap 5 y Vite.
+- Python 3 y Flask, con Flask-CORS.
+- SQLite mediante el módulo `sqlite3` incluido en Python.
+- MongoDB mediante PyMongo.
+- `python-dotenv` para cargar la configuración local.
+- `unittest` y el cliente de prueba de Flask.
 
-## Preparación en Windows
+## Configuración en Windows
 
-### 1. Crear las bases de datos
+### 1. Configurar MongoDB
 
-Puedes usar PostgreSQL instalado localmente o un servicio administrado. Crea una base `mesa_roja` y un usuario con permisos sobre ella. MongoDB puede ser local o un clúster de MongoDB Atlas; en Atlas crea una base y un usuario de base de datos y autoriza en Network Access la IP desde la que se conecta Flask.
+MongoDB puede ejecutarse localmente o en MongoDB Atlas. Para Atlas, crea un clúster, un usuario de base de datos y autoriza la IP desde la que se conectará Flask en Network Access. Copia la URI de conexión del clúster. La base utilizada por el proyecto se llama `mesa_roja`.
 
-La aplicación **no** puede conectarse hasta tener ambos servicios disponibles y sus variables configuradas. No publiques contraseñas, tokens ni el archivo `.env`.
+No pegues la URI en el frontend, en el repositorio ni en mensajes públicos. Si la contraseña contiene caracteres reservados de URL, codifícalos correctamente.
 
-Para una instalación local de PostgreSQL, entra a `psql` como administrador y crea una base y un usuario propios para la aplicación (reemplaza el marcador por una contraseña tuya):
-
-```sql
-CREATE USER mesa_app WITH PASSWORD 'REEMPLAZA_ESTA_CONTRASENA';
-CREATE DATABASE mesa_roja OWNER mesa_app;
-```
-
-En MongoDB Atlas, crea un clúster, un usuario de base de datos y una regla de Network Access para tu IP. Copia la URI de conexión del clúster; la base `mesa_roja` se especifica con `MONGODB_DATABASE`.
-
-### 2. Configurar variables de entorno
-
-Desde la carpeta del proyecto:
+Desde PowerShell, en la carpeta `mi-proyecto-vue`, crea la configuración local:
 
 ```powershell
 Copy-Item .env.example .env
 ```
 
-Edita `.env` con tus valores privados:
+Edita `.env` con tu URI privada:
 
 ```dotenv
-DATABASE_URL=postgresql://USUARIO:CONTRASENA@localhost:5432/mesa_roja
-MONGODB_URI=mongodb+srv://USUARIO:CONTRASENA@cluster.example.mongodb.net/?retryWrites=true&w=majority
+SQLITE_DATABASE_PATH=backend/data/mesa_roja.db
+MONGODB_URI=mongodb+srv://USUARIO:CONTRASENA@TU-CLUSTER.mongodb.net/?retryWrites=true&w=majority
 MONGODB_DATABASE=mesa_roja
 ```
 
-La dirección de MongoDB es solo un ejemplo de formato: reemplázala por la URI que proporciona Atlas o por tu URI local. Si la contraseña contiene caracteres reservados de URL, codifícalos antes de incorporarla. `.env` está excluido de Git; `.env.example` no contiene credenciales reales.
+Si MongoDB está instalado localmente, puedes usar `mongodb://localhost:27017/`. `SQLITE_DATABASE_PATH` es opcional: si no se define, se usa `backend/data/mesa_roja.db`. La base SQLite y sus tablas se crean al iniciar la API. `.env`, los archivos `.db`, los entornos virtuales y los archivos generados están excluidos de Git.
 
-### 3. Instalar y ejecutar el backend
+### 2. Instalar y arrancar Flask
 
 ```powershell
 py -m venv backend\.venv
@@ -84,8 +61,6 @@ python -m pip install -r backend\requirements.txt
 python -m backend.app
 ```
 
-Al arrancar, Flask comprueba las conexiones, crea el esquema relacional, inserta el catálogo de demostración si hace falta y crea los índices de MongoDB. La API local queda en `http://127.0.0.1:5000`. `GET /salud` muestra el estado de ambas bases de datos.
-
 Si PowerShell bloquea la activación del entorno:
 
 ```powershell
@@ -93,42 +68,44 @@ Si PowerShell bloquea la activación del entorno:
 .\backend\.venv\Scripts\python.exe -m backend.app
 ```
 
-### 4. Ejecutar el frontend
+Flask queda disponible en `http://127.0.0.1:5000`. Al arrancar, se crea el archivo SQLite, se inicializan las tablas y el catálogo, se comprueba la conexión MongoDB y se preparan los índices. `GET /salud` permite comprobar ambas conexiones.
 
-En otra terminal, desde la carpeta del proyecto:
+### 3. Arrancar Vue
+
+En otra terminal, desde la carpeta `mi-proyecto-vue`:
 
 ```powershell
 npm ci
 npm run dev
 ```
 
-Por defecto, Vue usa la API local `http://127.0.0.1:5000`. Para apuntar a otra API, define `VITE_API_URL` antes de iniciar Vite y configura `CORS_ORIGINS` en el backend para el origen del frontend.
+Por defecto, Vue llama a `http://127.0.0.1:5000`. Para utilizar otra dirección, configura `VITE_API_URL` antes de iniciar Vite y añade el origen del frontend a la variable `CORS_ORIGINS` del backend.
 
-## API HTTP
+## Endpoints
 
-Las rutas de consulta y escritura de actividades no están protegidas por autenticación de servidor: el login actual es una demostración local. No expongas esta API a Internet ni la uses con datos reales hasta implementar autenticación y autorización.
+Las rutas de actividades no están protegidas por autenticación de servidor. El login actual es una demostración local; no expongas la API a Internet ni la utilices con datos reales hasta implementar autenticación y autorización.
 
-| Método | Ruta | Uso |
+| Método | Ruta | Base y uso |
 |---|---|---|
-| `GET` | `/salud` | Comprueba PostgreSQL, MongoDB y eventos pendientes. |
-| `GET` | `/productos` | Consulta el catálogo y el stock desde PostgreSQL. |
-| `POST` | `/usuarios` | Crea o actualiza el cliente por correo. |
-| `POST` | `/pedidos` | Valida stock y crea pedido, detalle y eventos transaccionalmente. |
-| `GET` | `/pedidos` | Lista pedidos de PostgreSQL. |
-| `GET` | `/pedidos/<id>` | Consulta pedido, cliente y productos. |
-| `PATCH` | `/pedidos/<id>/estado` | Cambia a `Listo para recoger`, `En camino` o `Entregado`; registra el evento. |
-| `GET` | `/pedidos/<id>/historial` | Combina el pedido de PostgreSQL con historial, actividades y registros MongoDB. |
-| `POST` | `/actividades` | Registra una actividad en MongoDB. |
-| `GET` | `/actividades` | Lista actividades; admite `usuario_id`, `pedido_id` y `limite` (1–100). |
-| `GET` | `/actividades/<id>` | Consulta una actividad por ObjectId. |
-| `PATCH` | `/actividades/<id>` | Actualiza los campos permitidos de una actividad. |
-| `DELETE` | `/actividades/<id>` | Elimina una actividad y genera un registro del sistema. |
-| `POST` | `/eventos/pendientes/reintentar` | Reintenta publicar en MongoDB eventos pendientes de PostgreSQL. |
-| `GET` | `/reportes/ventas` | Consulta cantidad de pedidos y ventas desde PostgreSQL. |
+| `GET` | `/salud` | Comprueba SQLite, MongoDB y eventos pendientes. |
+| `GET` | `/productos` | Consulta catálogo y existencias en SQLite. |
+| `POST` | `/usuarios` | Crea o actualiza el cliente por correo en SQLite. |
+| `POST` | `/pedidos` | Crea pedido, detalles, actualiza stock y encola eventos en SQLite. |
+| `GET` | `/pedidos` | Lista pedidos desde SQLite. |
+| `GET` | `/pedidos/<id>` | Consulta pedido, cliente y productos desde SQLite. |
+| `PATCH` | `/pedidos/<id>/estado` | Cambia estado en SQLite y encola el evento. |
+| `GET` | `/pedidos/<id>/historial` | Combina el pedido de SQLite con historial y actividades de MongoDB. |
+| `POST` | `/actividades` | Crea actividad en MongoDB. |
+| `GET` | `/actividades` | Lista actividades; admite `usuario_id`, `pedido_id` y `limite` (1-100). |
+| `GET` | `/actividades/<id>` | Consulta actividad por ObjectId de MongoDB. |
+| `PATCH` | `/actividades/<id>` | Actualiza los campos permitidos en MongoDB. |
+| `DELETE` | `/actividades/<id>` | Elimina actividad y registra la acción en MongoDB. |
+| `POST` | `/eventos/pendientes/reintentar` | Reintenta publicar eventos pendientes de SQLite. |
+| `GET` | `/reportes/ventas` | Genera el reporte de pedidos y ventas en SQLite. |
 
 ### Ejemplos
 
-Crear una actividad (el usuario y el pedido, si se incluyen, deben existir en PostgreSQL):
+Crear una actividad con referencias existentes:
 
 ```http
 POST /actividades
@@ -148,8 +125,6 @@ Content-Type: application/json
   }
 }
 ```
-
-El servidor responde `201` con `{ "actividad": { "id": "<ObjectId>", ... } }`. Al crear, modificar o eliminar actividades también se añade una entrada a `registros_sistema`.
 
 Cambiar el estado de un pedido:
 
@@ -174,38 +149,38 @@ Consultar la persistencia políglota:
 GET /pedidos/1/historial
 ```
 
-La respuesta contiene `pedido` (PostgreSQL), `historial`, `actividades` y `registros_sistema` (MongoDB). Si quedan eventos de ese pedido pendientes en la cola SQL, el endpoint devuelve `503` en vez de presentar un historial incompleto como si estuviera actualizado.
+La respuesta contiene `pedido` desde SQLite y `historial`, `actividades` y `registros_sistema` desde MongoDB. Si hay eventos de ese pedido que no se pudieron publicar, el endpoint devuelve `503` en vez de presentar un historial incompleto como definitivo.
 
-Los errores de validación devuelven JSON con `error` y estado `400`; los recursos inexistentes, `404`; los conflictos de inventario, `409`; y los fallos de base de datos, `503`.
+Errores de validación devuelven JSON y estado `400`; recursos inexistentes, `404`; conflictos de inventario, `409`; y fallos de base de datos, `503`.
+
+## Datos anteriores y migración
+
+La rama anterior usaba PostgreSQL y guardaba su información en un servidor externo; este entorno no dispone de ese servidor ni de sus credenciales. La rama SQLite no modifica ni elimina ese PostgreSQL. Tampoco copia automáticamente sus datos a SQLite. Si necesitas conservar pedidos reales de una instalación PostgreSQL anterior, exporta y migra los datos explícitamente antes de cambiar de versión; el catálogo de demostración de esta aplicación se mantiene.
 
 ## Pruebas y evidencias
 
-### Pruebas locales sin bases externas
-
-Con el entorno virtual activado:
+Con el entorno virtual activado, ejecuta desde la raíz del proyecto:
 
 ```powershell
 python -m unittest discover -s backend\tests -t .
 npm run build
 ```
 
-Las pruebas unitarias usan adaptadores falsos de almacenamiento: verifican validaciones, rutas existentes, CRUD, la respuesta combinada y el reintento idempotente del outbox, pero **no** demuestran una conexión real a PostgreSQL o MongoDB.
+Las pruebas unitarias utilizan SQLite real en una base temporal y adaptadores falsos para MongoDB. Verifican esquema, claves foráneas, datos de prueba, compras transaccionales, descuento de inventario, cola, CRUD de API, historial combinado y validaciones. **No demuestran una conexión real a MongoDB.**
 
-### Prueba de integración con ambas bases reales
-
-Después de configurar `.env` y arrancar ambos servicios:
+Con MongoDB configurado en `.env`, ejecuta:
 
 ```powershell
 python -m backend.integration_smoke
 ```
 
-Esta prueba usa PostgreSQL y MongoDB configurados, crea datos temporales, comprueba los endpoints, valida el historial y limpia pedido, stock, usuario y documentos generados. No la ejecutes contra una base con datos de producción.
+La prueba usa SQLite temporal y tu MongoDB configurado, verifica las conexiones, el CRUD y los eventos reales, y limpia los datos temporales que crea. Usa una base de pruebas; no ejecutes la prueba de integración contra una base de producción. No se afirma que la integración con MongoDB haya sido probada hasta ejecutar este comando con credenciales válidas.
 
-Las pruebas ejecutadas en esta entrega se registran en [`evidencias/pruebas.md`](./evidencias/pruebas.md). En el entorno de desarrollo usado para esta implementación no había URI configuradas y los puertos locales `5432` y `27017` no estaban disponibles; por eso la prueba con bases reales queda pendiente y no se reporta como exitosa.
+Los registros verificables se encuentran en [`evidencias/pruebas.md`](./evidencias/pruebas.md), [`evidencias/pruebas_backend.txt`](./evidencias/pruebas_backend.txt) y [`evidencias/pruebas_frontend.txt`](./evidencias/pruebas_frontend.txt). El informe actualizado está en [`evidencias/implementacion-mongodb.pdf`](./evidencias/implementacion-mongodb.pdf).
 
-## PDF de la entrega
+## PDF
 
-El informe específico de la implementación está en [`evidencias/implementacion-mongodb.pdf`](./evidencias/implementacion-mongodb.pdf). Se puede regenerar instalando sus dependencias opcionales:
+El informe se puede regenerar con las dependencias opcionales:
 
 ```powershell
 python -m pip install -r backend\requirements-docs.txt
@@ -214,4 +189,4 @@ python -m backend.generate_report
 
 ## Login de demostración
 
-Usa `cliente@example.com`, `admin@example.com` o `repartidor@example.com` con la contraseña `123456`. Estas credenciales son públicas, se validan solo en el frontend y no constituyen autenticación real del backend.
+Usa `cliente@example.com`, `admin@example.com` o `repartidor@example.com` con la contraseña `123456`. Son credenciales públicas solo para la demostración del frontend, no autentican las rutas del backend y no deben usarse en producción.

@@ -6,12 +6,13 @@ python -m unittest discover -s backend\tests -t . -v
 test_activity_crud_and_audit_logs ... ok
 test_activity_is_returned_when_audit_write_fails ... ok
 test_activity_validation_and_missing_references ... ok
+test_app_requires_mongo_uri_only ... ok
 test_combined_order_history_and_status_update ... ok
-test_existing_product_user_order_and_report_endpoints ... ok
-test_health_and_outbox_retry_endpoints ... ok
-test_invalid_status_and_missing_order ... ok
-test_app_requires_both_database_connections ... ok
+test_invalid_status_missing_order_health_and_manual_retry ... ok
+test_order_transaction_rolls_back_on_invalid_product ... ok
+test_product_user_order_inventory_outbox_and_sales ... ok
+test_sqlite_creates_schema_relations_and_demo_catalog ... ok
 test_failed_mongo_publish_is_retryable_and_idempotent ... ok
 
-Ran 9 tests in 0.112s
+Ran 10 tests in 0.711s
 OK

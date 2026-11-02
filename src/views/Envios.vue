@@ -204,7 +204,7 @@ async function toggleHistory(orderId) {
       <div class="card-header bg-white">
         <h2 class="h5 mb-0">Historial del pedido PED-{{ selectedOrderId }}</h2>
         <p class="small text-body-secondary mb-0">
-          Información combinada de PostgreSQL y MongoDB.
+          Información combinada de SQLite y MongoDB.
         </p>
       </div>
       <div class="card-body">

@@ -119,7 +119,7 @@ def build_report():
         bottomMargin=22 * mm,
         title="Implementación de MongoDB y persistencia políglota",
         author="Proyecto universitario Mesa Roja",
-        subject="Integración de PostgreSQL y MongoDB en la aplicación existente",
+        subject="Integración de SQLite y MongoDB en la aplicación existente",
     )
 
     story = [
@@ -129,7 +129,7 @@ def build_report():
         Spacer(1, 20 * mm),
         paragraph("Informe técnico de la entrega", "CoverSubtitle"),
         Spacer(1, 7 * mm),
-        paragraph("Proyecto Mesa Roja - Vue 3, Flask, PostgreSQL y MongoDB", "CoverSubtitle"),
+        paragraph("Proyecto Mesa Roja - Vue 3, Flask, SQLite y MongoDB", "CoverSubtitle"),
         Spacer(1, 45 * mm),
         paragraph(
             "Documento elaborado a partir del código de esta entrega. Las pruebas de "
@@ -156,48 +156,58 @@ def build_report():
         (
             "2. Problemática y punto de partida",
             [
-                "La versión local que se revisó no tenía conexión ni tablas de PostgreSQL: "
-                "los usuarios y pedidos vivían en listas Python y se perdían al detener Flask. "
-                "Por eso, antes de agregar MongoDB fue necesario incorporar la persistencia "
-                "relacional que requiere el enunciado, conservando los endpoints y las "
-                "validaciones del flujo de compra.",
-                "No se migró información previa de PostgreSQL porque esa instalación no "
-                "existía en el código examinado.",
+                "La versión local de partida almacenaba usuarios y pedidos en listas Python, "
+                "que se perdían al detener Flask. La versión anterior de esta entrega agregó "
+                "PostgreSQL y MongoDB; esta rama mantiene la persistencia políglota, pero "
+                "cambia PostgreSQL por SQLite para facilitar la ejecución local en Windows.",
+                "La migración no modifica ni elimina una base PostgreSQL anterior y no copia "
+                "datos automáticamente. Si existe información que deba conservarse, hay que "
+                "exportarla y migrarla por separado.",
             ],
         ),
         (
             "3. Datos estructurados y datos dinámicos",
             [
                 "Los usuarios, productos, pedidos, detalles, precios y existencias tienen "
-                "campos y relaciones estables. PostgreSQL los organiza en tablas y permite "
+                "campos y relaciones estables. SQLite los organiza en tablas y permite "
                 "validar referencias e inventario en transacciones.",
                 "Los eventos de actividad, cambios de estado, acciones administrativas y "
                 "datos contextuales varían según la operación. MongoDB permite conservarlos "
                 "como documentos con un campo datos flexible, sin alterar el esquema SQL "
                 "cada vez que se agrega contexto.",
+                "backend/schema.sql define usuarios (nombre, correo y dirección), productos "
+                "(precio, existencias, categoría, descripción, imagen y estado), pedidos "
+                "(cliente, dirección, importes, moneda, estado y fecha), detalles_pedido "
+                "(producto, cantidad, precio y stock restante) y cola_eventos (colección, "
+                "documento JSON, intentos, error, fecha de creación y fecha de publicación). "
+                "Las restricciones e índices conservan las relaciones entre pedidos, usuarios, "
+                "productos y detalles.",
             ],
         ),
         (
             "4. Justificación de MongoDB y colecciones",
             [
-                "MongoDB se usa para consultar y conservar eventos por pedido y fecha. PyMongo "
-                "inserta documentos JSON/BSON y crea índices sobre pedido_id y fecha.",
+                "SQLite se eligió porque está incluido en Python, crea un archivo local y "
+                "no requiere instalar ni mantener un servidor SQL para el proyecto "
+                "universitario. Mantiene claves foráneas, restricciones, índices y "
+                "transacciones locales. MongoDB conserva documentos flexibles consultables "
+                "por pedido, usuario y fecha.",
             ],
         ),
         (
             "5. Comparación de responsabilidades",
             [
-                "PostgreSQL es la fuente principal para el estado actual del negocio: "
+                "SQLite es la fuente principal para el estado actual del negocio: "
                 "inventario, clientes, pedidos y ventas. MongoDB es la fuente de consulta "
                 "para la actividad histórica y los registros flexibles. Los identificadores "
-                "numéricos PostgreSQL se guardan como pedido_id y usuario_id en los "
+                "numéricos SQLite se guardan como pedido_id y usuario_id en los "
                 "documentos; el ObjectId identifica cada actividad.",
             ],
         ),
         (
             "6. Persistencia políglota e integridad",
             [
-                "No existe una transacción distribuida entre PostgreSQL y MongoDB. Para no "
+                "No existe una transacción distribuida entre SQLite y MongoDB. Para no "
                 "confirmar un pedido y perder su evento si MongoDB falla, la transacción SQL "
                 "guarda el pedido, descuenta el inventario y añade los eventos a cola_eventos "
                 "en un único commit. Luego Flask publica cada evento en MongoDB.",
@@ -211,11 +221,13 @@ def build_report():
         (
             "7. Operaciones CRUD y conexión",
             [
-                "PostgresStore crea el esquema desde backend/schema.sql, inicializa el "
-                "catálogo y realiza las transacciones de usuarios, pedidos y estados. "
+                "SQLiteStore crea el archivo y el esquema desde backend/schema.sql, "
+                "inicializa el catálogo y realiza las transacciones de usuarios, pedidos "
+                "y estados. "
                 "MongoStore crea índices y expone las operaciones para actividades. "
-                "La aplicación necesita DATABASE_URL y MONGODB_URI; MONGODB_DATABASE es "
-                "opcional y su valor predeterminado es mesa_roja.",
+                "La aplicación necesita MONGODB_URI. SQLite se crea localmente y su ruta "
+                "opcional se configura con SQLITE_DATABASE_PATH. MONGODB_DATABASE tiene "
+                "el valor predeterminado mesa_roja.",
                 "POST /actividades registra una actividad. GET /actividades permite listar "
                 "y filtrar. GET /actividades/<id> consulta una actividad. PATCH "
                 "/actividades/<id> actualiza campos permitidos y DELETE /actividades/<id> "
@@ -224,10 +236,10 @@ def build_report():
             ],
         ),
         (
-            "8. Consulta combinada PostgreSQL y MongoDB",
+            "8. Consulta combinada SQLite y MongoDB",
             [
                 "GET /pedidos/<id>/historial obtiene primero el pedido, cliente y productos "
-                "desde PostgreSQL. Luego publica eventos pendientes de ese pedido y consulta "
+                "desde SQLite. Luego publica eventos pendientes de ese pedido y consulta "
                 "en MongoDB historial_pedidos, actividades_usuarios y registros_sistema. "
                 "La respuesta reúne las cuatro propiedades bajo un único JSON.",
                 "Si no se pueden publicar eventos del pedido, el endpoint devuelve un error "
@@ -251,18 +263,17 @@ def build_report():
         (
             "10. Pruebas y evidencias",
             [
-                "La suite local contiene nueve pruebas automatizadas con adaptadores falsos: "
-                "verifica rutas, validaciones, CRUD, respuesta combinada, configuración y "
-                "reintentos idempotentes. El build de producción de Vite también se ejecutó "
-                "correctamente.",
-                "Estas pruebas no son una conexión real a bases de datos. En el entorno de "
-                "esta entrega no había DATABASE_URL ni MONGODB_URI y los puertos locales "
-                "5432 y 27017 no estaban disponibles. Por ello, no se afirma que el CRUD o "
-                "la conexión externa hayan sido verificados con servicios reales.",
-                "backend/integration_smoke.py contiene una prueba real reproducible: con "
-                "ambas bases configuradas crea datos temporales, comprueba los endpoints y "
-                "limpia el pedido y los documentos que genera. Su ejecución requiere "
-                "completar .env con credenciales propias.",
+                "La suite local contiene diez pruebas automatizadas: comprueba la creación "
+                "de la base SQLite temporal, tablas, claves foráneas, datos de prueba, "
+                "compras, stock, informes y cola. MongoDB se simula para las pruebas de API "
+                "y reintento. El build de producción de Vite también se ejecutó correctamente.",
+                "No había una URI de MongoDB configurada y el puerto local 27017 no estaba "
+                "disponible. Por ello, la conexión real a MongoDB, sus índices y operaciones "
+                "CRUD contra el servicio externo quedan pendientes de la configuración "
+                "del usuario y no se reportan como exitosas.",
+                "backend/integration_smoke.py contiene una prueba reproducible que usa una "
+                "base SQLite temporal y la conexión MongoDB real configurada en .env; crea "
+                "datos de prueba, comprueba los endpoints y limpia los datos generados.",
             ],
         ),
         (
@@ -279,13 +290,13 @@ def build_report():
         (
             "12. Conclusiones",
             [
-                "La solución separa datos de negocio y eventos: PostgreSQL protege "
+                "La solución separa datos de negocio y eventos: SQLite protege "
                 "transacciones y stock, mientras MongoDB permite conservar una bitácora "
                 "flexible. La cola de eventos hace explícito el límite entre las dos "
                 "bases y evita perder la trazabilidad por una interrupción temporal.",
                 "El código y la documentación incluyen instrucciones para reproducir la "
-                "configuración. La verificación final contra PostgreSQL y MongoDB reales "
-                "queda pendiente de que se proporcionen y configuren las conexiones.",
+                "configuración. La verificación final contra MongoDB real queda pendiente "
+                "de que se configure la URI del clúster o servidor.",
             ],
         ),
     ]
@@ -334,7 +345,7 @@ def build_report():
                 )
             )
             story.extend([Spacer(1, 2 * mm), table])
-        elif heading == "8. Consulta combinada PostgreSQL y MongoDB":
+        elif heading == "8. Consulta combinada SQLite y MongoDB":
             story.append(
                 paragraph(
                     '{"pedido": {...}, "historial": [...], '
