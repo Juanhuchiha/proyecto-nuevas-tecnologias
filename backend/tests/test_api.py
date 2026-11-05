@@ -9,7 +9,9 @@ from unittest.mock import patch
 from pymongo.errors import PyMongoError
 
 from backend.app import create_app
-from backend.persistence import SQLiteStore, publish_pending_events
+from backend.database.mongo_connection import create_mongo_store
+from backend.database.persistence import SQLiteStore
+from backend.services.events import publish_pending_events
 
 
 class FakeMongo:
@@ -374,6 +376,13 @@ class ApiTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "MONGODB_URI"):
                 create_app()
 
+    def test_connection_module_requires_atlas_uri_without_exposing_credentials(self):
+        with patch.dict(os.environ, {"MONGODB_URI": ""}):
+            with self.assertRaisesRegex(
+                RuntimeError, "Cluster0 > Connect > Drivers"
+            ):
+                create_mongo_store()
+
 
 class OutboxTests(unittest.TestCase):
     def test_failed_mongo_publish_is_retryable_and_idempotent(self):
@@ -398,7 +407,7 @@ class OutboxTests(unittest.TestCase):
                     self.documents.add(str(event_id))
 
             mongo = FailOnceMongo()
-            with self.assertLogs("backend.persistence", level="ERROR"):
+            with self.assertLogs("backend.services.events", level="ERROR"):
                 self.assertEqual(publish_pending_events(store, mongo), 0)
             failed = store.pending_events()
             self.assertEqual(len(failed), 1)

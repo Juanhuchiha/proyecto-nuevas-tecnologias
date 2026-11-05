@@ -1,12 +1,12 @@
 # Evidencias de la entrega SQLite + MongoDB
 
-Fecha de las verificaciones locales: 1 de noviembre de 2026.
+Fecha de las verificaciones previas: 1 de noviembre de 2026.
 
 ## Resultados ejecutados
 
 - Python: `python -m compileall -q backend` finalizó sin errores de sintaxis.
 - Pruebas API: `python -m unittest discover -s backend\tests -t . -v` ejecutó 10 pruebas. SQLite se probó usando archivos de base temporales reales; los adaptadores de MongoDB para las rutas se simularon. Consulta el registro [`pruebas_backend.txt`](./pruebas_backend.txt).
-- Frontend: `npm run build` finalizó correctamente. Consulta [`pruebas_frontend.txt`](./pruebas_frontend.txt).
+- Frontend: `npm run build` finalizó correctamente antes de la reorganización. Consulta [`pruebas_frontend.txt`](./pruebas_frontend.txt).
 - Las pruebas SQLite verifican la creación de tablas, claves foráneas, datos de demostración, registro y actualización de usuarios, pedidos, descuento de inventario, rollback, reportes y cola de eventos.
 - Las pruebas MongoDB simuladas verifican el CRUD de actividades, el historial combinado, los registros de auditoría y los reintentos; no son pruebas contra un servidor MongoDB real.
 
@@ -27,3 +27,15 @@ python -m backend.integration_smoke
 La prueba usa una SQLite temporal y limpia los documentos temporales que agrega a MongoDB. Ejecútala contra una base de pruebas, no contra una base con datos de producción.
 
 El informe actualizado y relacionado con esta rama está en [`implementacion-mongodb.pdf`](./implementacion-mongodb.pdf).
+
+## Verificación de la reorganización
+
+El 4 de noviembre de 2026, en la rama `refactor/project-structure`, se volvió a ejecutar la compilación Python, las 11 pruebas del backend y el build de Vue desde `frontend/`; todos pasaron. Las pruebas usan MongoDB simulado. No se configuró `MONGODB_URI`, así que no se hizo una conexión real a Atlas.
+
+Comandos desde la raíz del proyecto:
+
+```powershell
+python -m compileall -q backend
+python -m unittest discover -s backend\tests -t . -v
+npm --prefix frontend run build
+```

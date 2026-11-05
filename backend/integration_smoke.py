@@ -29,6 +29,14 @@ def run():
         user_id = None
         order_id = None
         activity_id = None
+        outbox_ids = []
+        publish_outbox_event = mongo.publish_outbox_event
+
+        def capture_outbox_event(event_id, collection_name, document):
+            outbox_ids.append(str(event_id))
+            return publish_outbox_event(event_id, collection_name, document)
+
+        mongo.publish_outbox_event = capture_outbox_event
 
         try:
             require_status(client.get("/salud"), 200)
@@ -105,7 +113,6 @@ def run():
             require_status(client.get("/reportes/ventas"), 200)
 
             require_status(client.delete(f"/actividades/{activity_id}"), 200)
-            activity_id = None
 
             return {
                 "resultado": "correcto",
@@ -133,15 +140,26 @@ def run():
                 },
             }
         finally:
+            if activity_id is None:
+                activity = mongo.database["actividades_usuarios"].find_one(
+                    {"datos.id_prueba": suffix}, {"_id": 1}
+                )
+                if activity is not None:
+                    activity_id = str(activity["_id"])
             if activity_id is not None:
                 mongo.delete_activity(activity_id)
-            if order_id is not None:
+                mongo.database["registros_sistema"].delete_many(
+                    {"datos.actividad_id": activity_id}
+                )
+            if outbox_ids:
                 for collection in (
                     "historial_pedidos",
-                    "actividades_usuarios",
                     "registros_sistema",
                 ):
-                    mongo.database[collection].delete_many({"pedido_id": order_id})
+                    mongo.database[collection].delete_many(
+                        {"_id": {"$in": outbox_ids}}
+                    )
+            if order_id is not None:
                 with sqlite_store.connect(write=True) as connection:
                     details = connection.execute(
                         """

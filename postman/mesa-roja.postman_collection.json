@@ -1,0 +1,399 @@
+{
+  "info": {
+    "_postman_id": "95ef9865-8ac3-4f4b-8b62-32bf83cf6d2a",
+    "name": "Sistema de Gestión de Pedidos - Mesa Roja",
+    "description": "Colección de endpoints Flask para el sistema de pedidos. Inicia el backend en http://127.0.0.1:5000 antes de enviar solicitudes. Las operaciones de actividades e historial requieren MongoDB conectado.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://127.0.0.1:5000",
+      "type": "string"
+    },
+    {
+      "key": "usuarioId",
+      "value": "1",
+      "type": "string"
+    },
+    {
+      "key": "pedidoId",
+      "value": "1",
+      "type": "string"
+    },
+    {
+      "key": "actividadId",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Estado y catálogo",
+      "item": [
+        {
+          "name": "Comprobar salud de las bases de datos",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/salud",
+              "host": ["{{baseUrl}}"],
+              "path": ["salud"]
+            },
+            "description": "Comprueba la conexión con SQLite y MongoDB."
+          },
+          "response": []
+        },
+        {
+          "name": "Listar productos",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/productos",
+              "host": ["{{baseUrl}}"],
+              "path": ["productos"]
+            },
+            "description": "Consulta el catálogo y las existencias en SQLite."
+          },
+          "response": []
+        },
+        {
+          "name": "Reporte de ventas",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/reportes/ventas",
+              "host": ["{{baseUrl}}"],
+              "path": ["reportes", "ventas"]
+            },
+            "description": "Consulta el resumen de pedidos y ventas almacenado en SQLite."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Usuarios",
+      "item": [
+        {
+          "name": "Crear o actualizar usuario de prueba",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200 || pm.response.code === 201) {",
+                  "    const body = pm.response.json();",
+                  "    if (body.usuario && body.usuario.id) pm.collectionVariables.set('usuarioId', body.usuario.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nombre\": \"Cliente de prueba Postman\",\n  \"correo\": \"cliente.postman@example.com\",\n  \"direccion\": \"Calle 10 # 20-30, Bogotá\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/usuarios",
+              "host": ["{{baseUrl}}"],
+              "path": ["usuarios"]
+            },
+            "description": "Crea o actualiza el cliente por correo en SQLite y guarda el usuarioId devuelto."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Pedidos",
+      "item": [
+        {
+          "name": "Crear pedido de prueba",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    const body = pm.response.json();",
+                  "    if (body.pedido && body.pedido.id) pm.collectionVariables.set('pedidoId', body.pedido.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"usuario_id\": {{usuarioId}},\n  \"direccion\": \"Calle 10 # 20-30, Bogotá\",\n  \"productos\": [\n    {\n      \"producto_id\": 1,\n      \"cantidad\": 1\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/pedidos",
+              "host": ["{{baseUrl}}"],
+              "path": ["pedidos"]
+            },
+            "description": "Crea un pedido con el usuarioId guardado por la solicitud de usuarios. El producto 1 debe tener existencias."
+          },
+          "response": []
+        },
+        {
+          "name": "Listar pedidos",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/pedidos",
+              "host": ["{{baseUrl}}"],
+              "path": ["pedidos"]
+            },
+            "description": "Lista los pedidos almacenados en SQLite."
+          },
+          "response": []
+        },
+        {
+          "name": "Consultar pedido",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/pedidos/{{pedidoId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["pedidos", "{{pedidoId}}"]
+            },
+            "description": "Consulta el pedido, cliente y productos desde SQLite."
+          },
+          "response": []
+        },
+        {
+          "name": "Actualizar estado del pedido",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"estado\": \"En camino\",\n  \"usuario\": {\n    \"nombre\": \"Repartidor de prueba\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/pedidos/{{pedidoId}}/estado",
+              "host": ["{{baseUrl}}"],
+              "path": ["pedidos", "{{pedidoId}}", "estado"]
+            },
+            "description": "Cambia el estado del pedido. Valores permitidos: Listo para recoger, En camino, Entregado."
+          },
+          "response": []
+        },
+        {
+          "name": "Consultar historial combinado SQLite + MongoDB",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/pedidos/{{pedidoId}}/historial",
+              "host": ["{{baseUrl}}"],
+              "path": ["pedidos", "{{pedidoId}}", "historial"]
+            },
+            "description": "Devuelve los datos del pedido desde SQLite y el historial, actividades y registros del sistema desde MongoDB."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Actividades (MongoDB)",
+      "item": [
+        {
+          "name": "Listar actividades",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/actividades?usuario_id={{usuarioId}}&pedido_id={{pedidoId}}&limite=50",
+              "host": ["{{baseUrl}}"],
+              "path": ["actividades"],
+              "query": [
+                {
+                  "key": "usuario_id",
+                  "value": "{{usuarioId}}"
+                },
+                {
+                  "key": "pedido_id",
+                  "value": "{{pedidoId}}"
+                },
+                {
+                  "key": "limite",
+                  "value": "50"
+                }
+              ]
+            },
+            "description": "Los filtros usuario_id y pedido_id son opcionales; limite admite valores de 1 a 100."
+          },
+          "response": []
+        },
+        {
+          "name": "Crear actividad de prueba",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    const body = pm.response.json();",
+                  "    if (body.actividad && body.actividad.id) pm.collectionVariables.set('actividadId', body.actividad.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tipo\": \"nota\",\n  \"descripcion\": \"Actividad de prueba creada desde Postman\",\n  \"usuario_id\": {{usuarioId}},\n  \"pedido_id\": {{pedidoId}},\n  \"responsable\": \"Operador de prueba\",\n  \"datos\": {\n    \"origen\": \"Postman\",\n    \"requiere_confirmacion\": false\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/actividades",
+              "host": ["{{baseUrl}}"],
+              "path": ["actividades"]
+            },
+            "description": "Requiere que usuarioId y pedidoId correspondan a registros existentes en SQLite. Guarda el actividadId devuelto."
+          },
+          "response": []
+        },
+        {
+          "name": "Consultar actividad",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/actividades/{{actividadId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["actividades", "{{actividadId}}"]
+            },
+            "description": "Consulta la actividad identificada por su ObjectId de MongoDB."
+          },
+          "response": []
+        },
+        {
+          "name": "Actualizar actividad",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"descripcion\": \"Actividad actualizada desde Postman\",\n  \"responsable\": \"Operador de prueba\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/actividades/{{actividadId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["actividades", "{{actividadId}}"]
+            },
+            "description": "Actualiza únicamente los campos indicados y registra la acción en MongoDB."
+          },
+          "response": []
+        },
+        {
+          "name": "Eliminar actividad",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/actividades/{{actividadId}}?responsable=Operador%20de%20prueba",
+              "host": ["{{baseUrl}}"],
+              "path": ["actividades", "{{actividadId}}"],
+              "query": [
+                {
+                  "key": "responsable",
+                  "value": "Operador de prueba"
+                }
+              ]
+            },
+            "description": "Elimina la actividad y registra la acción en registros_sistema de MongoDB."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Cola de eventos",
+      "item": [
+        {
+          "name": "Reintentar eventos pendientes",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/eventos/pendientes/reintentar",
+              "host": ["{{baseUrl}}"],
+              "path": ["eventos", "pendientes", "reintentar"]
+            },
+            "description": "Intenta publicar en MongoDB los eventos pendientes guardados en la cola SQLite."
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}

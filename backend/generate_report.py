@@ -175,7 +175,7 @@ def build_report():
                 "datos contextuales varían según la operación. MongoDB permite conservarlos "
                 "como documentos con un campo datos flexible, sin alterar el esquema SQL "
                 "cada vez que se agrega contexto.",
-                "backend/schema.sql define usuarios (nombre, correo y dirección), productos "
+                "backend/database/schema.sql define usuarios (nombre, correo y dirección), productos "
                 "(precio, existencias, categoría, descripción, imagen y estado), pedidos "
                 "(cliente, dirección, importes, moneda, estado y fecha), detalles_pedido "
                 "(producto, cantidad, precio y stock restante) y cola_eventos (colección, "
@@ -221,7 +221,7 @@ def build_report():
         (
             "7. Operaciones CRUD y conexión",
             [
-                "SQLiteStore crea el archivo y el esquema desde backend/schema.sql, "
+                "SQLiteStore crea el archivo y el esquema desde backend/database/schema.sql, "
                 "inicializa el catálogo y realiza las transacciones de usuarios, pedidos "
                 "y estados. "
                 "MongoStore crea índices y expone las operaciones para actividades. "
@@ -263,7 +263,7 @@ def build_report():
         (
             "10. Pruebas y evidencias",
             [
-                "La suite local contiene diez pruebas automatizadas: comprueba la creación "
+                "La suite local contiene once pruebas automatizadas: comprueba la creación "
                 "de la base SQLite temporal, tablas, claves foráneas, datos de prueba, "
                 "compras, stock, informes y cola. MongoDB se simula para las pruebas de API "
                 "y reintento. El build de producción de Vite también se ejecutó correctamente.",

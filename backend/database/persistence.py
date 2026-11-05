@@ -11,25 +11,18 @@ from bson.errors import InvalidId
 from pymongo import ASCENDING, DESCENDING, MongoClient, ReturnDocument
 from pymongo.errors import DuplicateKeyError, PyMongoError
 
-from backend.catalog import PRODUCTS
+from backend.data.catalog import PRODUCTS
+from backend.models.errors import RequestError
 
 logger = logging.getLogger(__name__)
 ENVIO_COP = 5000
-
-
-class RequestError(Exception):
-    def __init__(self, message, status_code, details=None):
-        super().__init__(message)
-        self.message = message
-        self.status_code = status_code
-        self.details = details or {}
 
 
 class SQLiteStore:
     def __init__(self, database_path=None):
         self.database_path = Path(
             database_path
-            or Path(__file__).with_name("data") / "mesa_roja.db"
+            or Path(__file__).resolve().parents[1] / "data" / "mesa_roja.db"
         ).expanduser().resolve()
 
     @contextmanager
@@ -520,7 +513,7 @@ class MongoStore:
             return None
 
     def create_activity(self, document):
-        result = self.database["actividades_usuarios"].insert_one(document)
+        result = self.database["actividades_usuarios"].insert_one(dict(document))
         return {"id": str(result.inserted_id), **document}
 
     def list_activities(self, filters, limit):
@@ -586,23 +579,3 @@ class MongoStore:
 
     def close(self):
         self.client.close()
-
-
-def publish_pending_events(sqlite_store, mongo):
-    published = 0
-    for event in sqlite_store.pending_events():
-        event_id = event["id"]
-        try:
-            mongo.publish_outbox_event(
-                event_id, event["coleccion"], event["documento"]
-            )
-        except PyMongoError as error:
-            sqlite_store.mark_event_failed(event_id, str(error))
-            logger.exception(
-                "No se pudo publicar el evento %s en MongoDB; queda pendiente de reintento.",
-                event_id,
-            )
-            continue
-        sqlite_store.mark_event_published(event_id)
-        published += 1
-    return published
