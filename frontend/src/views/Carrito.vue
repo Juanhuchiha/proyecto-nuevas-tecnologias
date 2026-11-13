@@ -10,8 +10,9 @@ import {
   productForCartItem,
   removeFromCart,
   syncProductsFromApi,
+  currentUser,
 } from '../data/restaurant'
-import { createOrder, createUser, fetchProducts } from '../services/api'
+import { createOrder, fetchProducts } from '../services/api'
 
 const router = useRouter()
 const orderPlaced = ref(false)
@@ -21,7 +22,12 @@ const orderWarning = ref('')
 const attemptedSubmit = ref(false)
 const shippingForm = ref(null)
 const isSubmitting = ref(false)
-const shipping = reactive({ name: '', email: '', address: '', city: '' })
+const shipping = reactive({
+  name: currentUser.name,
+  email: currentUser.email,
+  address: '',
+  city: '',
+})
 
 const cartItems = computed(() =>
   cart.map((item) => ({ ...item, product: productForCartItem(item) })).filter((item) => item.product),
@@ -55,14 +61,13 @@ async function submitOrder() {
 
   isSubmitting.value = true
   try {
-    const customer = await createUser({
-      nombre: shipping.name.trim(),
-      correo: shipping.email.trim(),
-      direccion: `${shipping.address.trim()}, ${shipping.city.trim()}`,
-    })
+    if (!Number.isInteger(currentUser.id) || currentUser.id < 1) {
+      throw new Error('No se encontró tu cuenta. Cierra sesión e inicia sesión nuevamente.')
+    }
+
     const order = await createOrder({
-      usuario_id: customer.id,
-      direccion: customer.direccion,
+      usuario_id: currentUser.id,
+      direccion: `${shipping.address.trim()}, ${shipping.city.trim()}`,
       productos: cartItems.value.map((item) => ({
         producto_id: item.id,
         cantidad: item.quantity,
@@ -190,6 +195,7 @@ async function submitOrder() {
                 v-model="shipping.name"
                 class="form-control"
                 :class="{ 'is-invalid': isInvalid('name') }"
+                readonly
                 required
                 autocomplete="name"
               />
@@ -203,6 +209,7 @@ async function submitOrder() {
                 class="form-control"
                 :class="{ 'is-invalid': isInvalid('email') }"
                 type="email"
+                readonly
                 required
                 autocomplete="email"
               />

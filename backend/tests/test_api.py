@@ -324,6 +324,48 @@ class ApiTests(unittest.TestCase):
             {"created": 0, "updated": 0, "unchanged": 4},
         )
 
+    def test_customer_can_create_order_for_authenticated_account_only(self):
+        customer = self.sqlite.create_user(
+            "Cliente de prueba",
+            "cliente-pedido@example.com",
+            "",
+            generate_password_hash("cliente-password"),
+            "cliente",
+        )
+        customer_client = self.app.test_client()
+        login = customer_client.post(
+            "/auth/login",
+            json={
+                "correo": "cliente-pedido@example.com",
+                "password": "cliente-password",
+            },
+        )
+        self.assertEqual(login.status_code, 200)
+        headers = {"Authorization": f"Bearer {login.json['token']}"}
+
+        order = customer_client.post(
+            "/pedidos",
+            json={
+                "usuario_id": customer["id"],
+                "direccion": "Calle 1, Chapinero",
+                "productos": [{"producto_id": 1, "cantidad": 1}],
+            },
+            headers=headers,
+        )
+        self.assertEqual(order.status_code, 201)
+        self.assertEqual(order.json["pedido"]["usuario_id"], customer["id"])
+        self.assertEqual(order.json["pedido"]["direccion"], "Calle 1, Chapinero")
+
+        forbidden_order = customer_client.post(
+            "/pedidos",
+            json={
+                "usuario_id": self.admin["id"],
+                "productos": [{"producto_id": 1, "cantidad": 1}],
+            },
+            headers=headers,
+        )
+        self.assertEqual(forbidden_order.status_code, 403)
+
     def test_auditor_can_read_reports_orders_and_activities_only(self):
         order = self.create_order()
         activity = self.client.post(
