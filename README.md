@@ -1,11 +1,13 @@
 Sistema de Gestión de Pedidos en Línea para Restaurante – Mesa Roja
 Usuarios para ingresar al sistema
-Estas son las cuentas de prueba para entrar a los diferentes módulos. La contraseña se define al preparar las cuentas.
-Rol	Correo
-Administrador	jcamilogrimaldoperez@admin.com
-Cliente	jcamilogrimaldoperez@cliente.com
-Repartidor	jcamilogrimaldoperez@repartidor.com
-Auditor	jcamilogrimaldoperez@auditor.com
+Estas son las cuentas de prueba para entrar a los diferentes módulos. Las cuatro utilizan la contraseña `123456`.
+
+| Rol | Correo | Contraseña |
+|---|---|---|
+| Administrador | [jcamilogrimaldoperez@admin.com](mailto:jcamilogrimaldoperez@admin.com) | `123456` |
+| Cliente | [jcamilogrimaldoperez@cliente.com](mailto:jcamilogrimaldoperez@cliente.com) | `123456` |
+| Repartidor | [jcamilogrimaldoperez@repartidor.com](mailto:jcamilogrimaldoperez@repartidor.com) | `123456` |
+| Auditor | [jcamilogrimaldoperez@auditor.com](mailto:jcamilogrimaldoperez@auditor.com) | `123456` |
 
 
 Importante: las cuentas se deben crear primero con el comando explicado en la sección Preparar las cuentas de demostración. En otro computador también hay que ejecutar ese paso. Son cuentas para pruebas académicas, no para un entorno real.
@@ -77,7 +79,7 @@ Las cuentas de prueba que aparecen al principio de este README no se crean autom
 $env:MESA_ROJA_ENV = "development"
 $env:MESA_ROJA_DEMO_MODE = "true"
 .\backend\.venv\Scripts\python.exe -m backend.seed_demo_users
-El programa pedirá una contraseña y después solicitará confirmarla. Elige una contraseña de prueba de al menos seis caracteres e ingrésala en las dos ocasiones. No reutilices una contraseña personal. La contraseña no se muestra mientras se escribe.
+El programa pedirá una contraseña y después solicitará confirmarla. Escribe `123456` en las dos ocasiones para crear o actualizar las cuentas mostradas al principio de este README. Esta es una contraseña pública únicamente para la demostración académica; no la uses en producción. La contraseña no se muestra mientras se escribe y se guarda con hashing de Werkzeug, nunca como texto normal.
 
 Al terminar, puedes quitar las variables de la terminal:
 Remove-Item Env:\MESA_ROJA_ENV, Env:\MESA_ROJA_DEMO_MODE
