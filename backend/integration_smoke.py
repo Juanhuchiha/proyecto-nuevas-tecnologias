@@ -5,6 +5,7 @@ import uuid
 from pathlib import Path
 
 from backend.app import create_app
+from werkzeug.security import generate_password_hash
 
 
 def require_status(response, expected):
@@ -25,6 +26,24 @@ def run():
         sqlite_store = app.extensions["sqlite_store"]
         mongo = app.extensions["mongo_store"]
         suffix = uuid.uuid4().hex
+        admin_email = f"admin-smoke-{suffix}@example.com"
+        admin_password = uuid.uuid4().hex
+        sqlite_store.create_or_update_user(
+            "Administrador de prueba",
+            admin_email,
+            "Dirección temporal de pruebas",
+            generate_password_hash(admin_password),
+            "admin",
+        )
+        login = client.post(
+            "/auth/login",
+            json={
+                "correo": admin_email,
+                "password": admin_password,
+            },
+        )
+        require_status(login, 200)
+        headers = {"Authorization": f"Bearer {login.json['token']}"}
         email = f"smoke-{suffix}@example.com"
         user_id = None
         order_id = None
@@ -47,7 +66,9 @@ def run():
                     "nombre": "Prueba de integración",
                     "correo": email,
                     "direccion": "Dirección temporal de pruebas",
+                    "password": uuid.uuid4().hex,
                 },
+                headers=headers,
             )
             require_status(user_response, 201)
             user_id = user_response.json["usuario"]["id"]
@@ -58,6 +79,7 @@ def run():
                     "usuario_id": user_id,
                     "productos": [{"producto_id": 8, "cantidad": 1}],
                 },
+                headers=headers,
             )
             require_status(order_response, 201)
             order_id = order_response.json["pedido"]["id"]
@@ -72,20 +94,28 @@ def run():
                     "datos": {"id_prueba": suffix},
                     "responsable": "Prueba automatizada",
                 },
+                headers=headers,
             )
             require_status(activity_response, 201)
             activity_id = activity_response.json["actividad"]["id"]
 
-            require_status(client.get(f"/actividades/{activity_id}"), 200)
+            require_status(
+                client.get(f"/actividades/{activity_id}", headers=headers), 200
+            )
             require_status(
                 client.patch(
                     f"/actividades/{activity_id}",
                     json={"descripcion": "Actividad actualizada correctamente."},
+                    headers=headers,
                 ),
                 200,
             )
             require_status(
-                client.get(f"/actividades?pedido_id={order_id}&limite=10"), 200
+                client.get(
+                    f"/actividades?pedido_id={order_id}&limite=10",
+                    headers=headers,
+                ),
+                200,
             )
 
             status_response = client.patch(
@@ -97,10 +127,13 @@ def run():
                         "nombre": "Repartidor de prueba",
                     },
                 },
+                headers=headers,
             )
             require_status(status_response, 200)
 
-            history_response = client.get(f"/pedidos/{order_id}/historial")
+            history_response = client.get(
+                f"/pedidos/{order_id}/historial", headers=headers
+            )
             require_status(history_response, 200)
             if len(history_response.json["historial"]) < 2:
                 raise AssertionError(
@@ -110,9 +143,11 @@ def run():
                 raise AssertionError(
                     "La actividad temporal no aparece en el historial combinado."
                 )
-            require_status(client.get("/reportes/ventas"), 200)
+            require_status(client.get("/reportes/ventas", headers=headers), 200)
 
-            require_status(client.delete(f"/actividades/{activity_id}"), 200)
+            require_status(
+                client.delete(f"/actividades/{activity_id}", headers=headers), 200
+            )
 
             return {
                 "resultado": "correcto",

@@ -1,15 +1,17 @@
 import json
 import logging
+import re
 import sqlite3
 import uuid
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from bson import ObjectId
 from bson.errors import InvalidId
 from pymongo import ASCENDING, DESCENDING, MongoClient, ReturnDocument
-from pymongo.errors import DuplicateKeyError, PyMongoError
+from pymongo.errors import DuplicateKeyError
+from werkzeug.security import check_password_hash, generate_password_hash
 
 from backend.data.catalog import PRODUCTS
 from backend.models.errors import RequestError
@@ -26,7 +28,7 @@ class SQLiteStore:
         ).expanduser().resolve()
 
     @contextmanager
-    def connect(self, write=False):
+    def connect(self, write=False, foreign_keys=True):
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         connection = sqlite3.connect(
             str(self.database_path),
@@ -34,7 +36,9 @@ class SQLiteStore:
             isolation_level=None,
         )
         connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute(
+            "PRAGMA foreign_keys = ON" if foreign_keys else "PRAGMA foreign_keys = OFF"
+        )
         connection.execute("PRAGMA busy_timeout = 10000")
         try:
             if write:
@@ -53,7 +57,61 @@ class SQLiteStore:
         schema_path = Path(__file__).with_name("schema.sql")
         with self.connect() as connection:
             connection.executescript(schema_path.read_text(encoding="utf-8"))
-        with self.connect(write=True) as connection:
+        with self.connect(write=True, foreign_keys=False) as connection:
+            columns = {
+                row["name"]
+                for row in connection.execute("PRAGMA table_info(usuarios)")
+            }
+            if "rol" not in columns:
+                connection.execute(
+                    """
+                    ALTER TABLE usuarios
+                    ADD COLUMN rol TEXT NOT NULL DEFAULT 'cliente'
+                    CHECK (rol IN ('cliente', 'admin', 'repartidor', 'auditor'))
+                    """
+                )
+            if "password_hash" not in columns:
+                connection.execute("ALTER TABLE usuarios ADD COLUMN password_hash TEXT")
+            if "token_version" not in columns:
+                connection.execute(
+                    """
+                    ALTER TABLE usuarios
+                    ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0
+                    CHECK (token_version >= 0)
+                    """
+                )
+            user_table_sql = connection.execute(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'usuarios'"
+            ).fetchone()["sql"]
+            role_constraint = re.search(
+                r"\brol\s+IN\s*\(([^)]*)\)", user_table_sql, re.IGNORECASE
+            )
+            if role_constraint:
+                supported_roles = {
+                    role.strip().strip("'\"").lower()
+                    for role in role_constraint.group(1).split(",")
+                }
+                if "auditor" not in supported_roles:
+                    self._migrate_user_roles(connection)
+            duplicates = connection.execute(
+                """
+                SELECT 1
+                FROM usuarios
+                GROUP BY lower(trim(correo))
+                HAVING COUNT(*) > 1
+                LIMIT 1
+                """
+            ).fetchone()
+            if duplicates is not None:
+                raise sqlite3.IntegrityError(
+                    "Hay correos duplicados que solo cambian en mayúsculas o espacios."
+                )
+            connection.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_usuarios_correo_normalizado
+                ON usuarios(lower(trim(correo)))
+                """
+            )
             connection.executemany(
                 """
                 INSERT INTO productos
@@ -68,6 +126,107 @@ class SQLiteStore:
                     for product in PRODUCTS
                 ],
             )
+            if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
+                raise sqlite3.IntegrityError(
+                    "La migración de usuarios produjo referencias inválidas."
+                )
+
+    @staticmethod
+    def _migrate_user_roles(connection):
+        table_name = f"usuarios_migration_{uuid.uuid4().hex}"
+        connection.execute(
+            f"""
+            CREATE TABLE {table_name} (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                nombre TEXT NOT NULL,
+                correo TEXT NOT NULL UNIQUE,
+                direccion TEXT NOT NULL DEFAULT '',
+                rol TEXT NOT NULL DEFAULT 'cliente'
+                    CHECK (rol IN ('cliente', 'admin', 'repartidor', 'auditor')),
+                password_hash TEXT,
+                token_version INTEGER NOT NULL DEFAULT 0
+                    CHECK (token_version >= 0)
+            )
+            """
+        )
+        connection.execute(
+            f"""
+            INSERT INTO {table_name}
+                (id, nombre, correo, direccion, rol, password_hash, token_version)
+            SELECT id, nombre, correo, direccion, rol, password_hash, token_version
+            FROM usuarios
+            """
+        )
+        connection.execute("DROP TABLE usuarios")
+        connection.execute(f"ALTER TABLE {table_name} RENAME TO usuarios")
+
+    def seed_demo_users(self, password):
+        if not isinstance(password, str) or len(password) < 6:
+            raise ValueError("La contraseña demo debe tener al menos 6 caracteres.")
+
+        demo_users = (
+            ("Administrador de prueba", "jcamilogrimaldoperez@admin.com", "admin"),
+            ("Cliente de prueba", "jcamilogrimaldoperez@cliente.com", "cliente"),
+            ("Repartidor de prueba", "jcamilogrimaldoperez@repartidor.com", "repartidor"),
+            ("Auditor de prueba", "jcamilogrimaldoperez@auditor.com", "auditor"),
+        )
+        created = 0
+        updated = 0
+        unchanged = 0
+        with self.connect(write=True) as connection:
+            for name, email, role in demo_users:
+                normalized_email = email.lower()
+                existing = connection.execute(
+                    """
+                    SELECT id, rol, password_hash
+                    FROM usuarios
+                    WHERE lower(trim(correo)) = ?
+                    """,
+                    (normalized_email,),
+                ).fetchone()
+                if existing is None:
+                    connection.execute(
+                        """
+                        INSERT INTO usuarios
+                            (nombre, correo, direccion, rol, password_hash)
+                        VALUES (?, ?, '', ?, ?)
+                        """,
+                        (
+                            name,
+                            normalized_email,
+                            role,
+                            generate_password_hash(password),
+                        ),
+                    )
+                    created += 1
+                    continue
+
+                changes = []
+                values = []
+                if existing["rol"] != role:
+                    changes.append("rol = ?")
+                    values.append(role)
+                password_hash = existing["password_hash"]
+                try:
+                    password_matches = password_hash and check_password_hash(
+                        password_hash, password
+                    )
+                except (TypeError, ValueError):
+                    password_matches = False
+                if not password_matches:
+                    changes.append("password_hash = ?")
+                    values.append(generate_password_hash(password))
+                if changes:
+                    changes.append("token_version = token_version + 1")
+                    values.append(existing["id"])
+                    connection.execute(
+                        f"UPDATE usuarios SET {', '.join(changes)} WHERE id = ?",
+                        values,
+                    )
+                    updated += 1
+                else:
+                    unchanged += 1
+        return {"created": created, "updated": updated, "unchanged": unchanged}
 
     @staticmethod
     def _product(row):
@@ -85,28 +244,173 @@ class SQLiteStore:
             ).fetchall()
         return [self._product(row) for row in rows]
 
-    def create_or_update_user(self, name, email, address):
-        with self.connect(write=True) as connection:
-            existing = connection.execute(
-                "SELECT id FROM usuarios WHERE correo = ?", (email,)
-            ).fetchone()
-            row = connection.execute(
-                """
-                INSERT INTO usuarios (nombre, correo, direccion)
-                VALUES (?, ?, ?)
-                ON CONFLICT (correo) DO UPDATE
-                    SET nombre = excluded.nombre, direccion = excluded.direccion
-                RETURNING id, nombre, correo, direccion
-                """,
-                (name, email, address),
-            ).fetchone()
-        return dict(row), 200 if existing else 201
-
     def user_exists(self, user_id):
         with self.connect() as connection:
             return connection.execute(
                 "SELECT 1 FROM usuarios WHERE id = ?", (user_id,)
             ).fetchone() is not None
+
+    def get_user_by_email(self, email):
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT id, nombre, correo, direccion, rol, password_hash, token_version
+                FROM usuarios WHERE lower(trim(correo)) = ?
+                """,
+                (email.strip().lower(),),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def get_user_by_id(self, user_id):
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT id, nombre, correo, direccion, rol, password_hash, token_version
+                FROM usuarios WHERE id = ?
+                """,
+                (user_id,),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def create_or_update_user(
+        self, name, email, address, password_hash=None, role="cliente"
+    ):
+        normalized_name = name.strip()
+        normalized_email = email.strip().lower()
+        with self.connect(write=True) as connection:
+            existing = connection.execute(
+                """
+                SELECT id, rol, password_hash FROM usuarios
+                WHERE lower(trim(correo)) = ?
+                """,
+                (normalized_email,),
+            ).fetchone()
+            if existing is None:
+                row = connection.execute(
+                    """
+                    INSERT INTO usuarios (nombre, correo, direccion, rol, password_hash)
+                    VALUES (?, ?, ?, ?, ?)
+                    RETURNING id, nombre, correo, direccion, rol, password_hash,
+                              token_version
+                    """,
+                    (
+                        normalized_name,
+                        normalized_email,
+                        address,
+                        role,
+                        password_hash,
+                    ),
+                ).fetchone()
+                return dict(row), 201
+
+            updates = ["nombre = ?", "correo = ?", "direccion = ?"]
+            values = [normalized_name, normalized_email, address]
+            if password_hash is not None:
+                updates.append("password_hash = ?")
+                values.append(password_hash)
+            if role is not None:
+                updates.append("rol = ?")
+                values.append(role)
+            if password_hash is not None or (
+                role is not None and role != existing["rol"]
+            ):
+                updates.append("token_version = token_version + 1")
+            values.extend([normalized_email])
+            row = connection.execute(
+                f"""
+                UPDATE usuarios
+                SET {', '.join(updates)}
+                WHERE lower(trim(correo)) = ?
+                RETURNING id, nombre, correo, direccion, rol, password_hash,
+                          token_version
+                """,
+                values,
+            ).fetchone()
+        return dict(row), 200
+
+    def create_user(self, name, email, address, password_hash, role="cliente"):
+        normalized_email = email.strip().lower()
+        try:
+            with self.connect(write=True) as connection:
+                row = connection.execute(
+                    """
+                    INSERT INTO usuarios
+                        (nombre, correo, direccion, rol, password_hash)
+                    VALUES (?, ?, ?, ?, ?)
+                    RETURNING id, nombre, correo, direccion, rol, password_hash,
+                              token_version
+                    """,
+                    (name.strip(), normalized_email, address, role, password_hash),
+                ).fetchone()
+        except sqlite3.IntegrityError as error:
+            if self.get_user_by_email(normalized_email) is not None:
+                raise RequestError("El correo ya está registrado.", 409) from error
+            raise
+        return dict(row)
+
+    def revoke_user_tokens(self, user_id):
+        with self.connect(write=True) as connection:
+            connection.execute(
+                "UPDATE usuarios SET token_version = token_version + 1 WHERE id = ?",
+                (user_id,),
+            )
+
+    def create_product(self, fields):
+        with self.connect(write=True) as connection:
+            row = connection.execute(
+                """
+                INSERT INTO productos
+                    (nombre, precio, stock, categoria, descripcion, imagen, activo)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                RETURNING id, nombre, precio, stock, categoria, descripcion, imagen, activo
+                """,
+                (
+                    fields["nombre"],
+                    fields["precio"],
+                    fields["stock"],
+                    fields["categoria"],
+                    fields["descripcion"],
+                    fields["imagen"],
+                    int(fields["activo"]),
+                ),
+            ).fetchone()
+        return self._product(row)
+
+    def update_product(self, product_id, fields):
+        if not fields:
+            raise RequestError("Incluye al menos un campo para actualizar.", 400)
+        updates = []
+        values = []
+        for field, value in fields.items():
+            updates.append(f"{field} = ?")
+            values.append(int(value) if field == "activo" else value)
+        values.append(product_id)
+        with self.connect(write=True) as connection:
+            row = connection.execute(
+                f"""
+                UPDATE productos SET {', '.join(updates)}
+                WHERE id = ?
+                RETURNING id, nombre, precio, stock, categoria, descripcion, imagen, activo
+                """,
+                values,
+            ).fetchone()
+        if row is None:
+            raise RequestError("No se encontró el producto.", 404)
+        return self._product(row)
+
+    def deactivate_product(self, product_id):
+        with self.connect(write=True) as connection:
+            row = connection.execute(
+                """
+                UPDATE productos SET activo = 0
+                WHERE id = ?
+                RETURNING id, nombre, precio, stock, categoria, descripcion, imagen, activo
+                """,
+                (product_id,),
+            ).fetchone()
+        if row is None:
+            raise RequestError("No se encontró el producto.", 404)
+        return self._product(row)
 
     def create_order(self, user_id, address, quantities):
         with self.connect(write=True) as connection:
@@ -445,19 +749,49 @@ class SQLiteStore:
             json.loads(row["documento"]).get("pedido_id") == order_id for row in rows
         )
 
-    def sales_report(self):
+    def sales_report(self, start_date=None, end_date=None):
+        conditions = []
+        parameters = []
+        if start_date is not None:
+            conditions.append("creado_en >= ?")
+            parameters.append(f"{start_date}T00:00:00")
+        if end_date is not None:
+            exclusive_end = (
+                datetime.fromisoformat(end_date).date()
+                + timedelta(days=1)
+            ).isoformat()
+            conditions.append("creado_en < ?")
+            parameters.append(f"{exclusive_end}T00:00:00")
+        where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
         with self.connect() as connection:
             row = connection.execute(
-                """
+                f"""
                 SELECT COUNT(*) AS cantidad_pedidos,
                        COALESCE(SUM(total), 0) AS total_ventas
                 FROM pedidos
-                """
+                {where_clause}
+                """,
+                parameters,
             ).fetchone()
         return {
             "cantidad_pedidos": row["cantidad_pedidos"],
             "total_ventas": row["total_ventas"],
             "moneda": "COP",
+            "desde": start_date,
+            "hasta": end_date,
+        }
+
+    def inventory_report(self):
+        products = self.list_products()
+        active_products = [product for product in products if product["activo"]]
+        return {
+            "cantidad_productos": len(products),
+            "productos_activos": len(active_products),
+            "productos_inactivos": len(products) - len(active_products),
+            "unidades_disponibles": sum(
+                product["stock"] for product in active_products
+            ),
+            "productos": products,
         }
 
 

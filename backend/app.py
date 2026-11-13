@@ -1,13 +1,12 @@
 import os
 import sqlite3
-from pathlib import Path
 
 from flask import Flask, jsonify
 from flask_cors import CORS
 from pymongo.errors import PyMongoError
 
 from backend.config import load_environment
-from backend.database.mongo_connection import create_mongo_store
+from backend.database.mongo_connection import create_mongo_store, sanitize_mongo_error
 from backend.database.persistence import SQLiteStore
 from backend.models.errors import RequestError
 from backend.routes.api import register_routes
@@ -18,6 +17,29 @@ load_environment()
 def create_app(settings=None, sqlite_store=None, mongo=None):
     app = Flask(__name__)
     app.config.update(settings or {})
+    jwt_secret = app.config.get("JWT_SECRET_KEY") or os.getenv("JWT_SECRET_KEY")
+    if not jwt_secret and app.config.get("TESTING"):
+        jwt_secret = "mesa-roja-test-secret-key-for-tests"
+    if not isinstance(jwt_secret, str) or len(jwt_secret) < 32:
+        raise RuntimeError(
+            "JWT_SECRET_KEY es obligatorio y debe tener al menos 32 caracteres."
+        )
+    app.config["JWT_SECRET_KEY"] = jwt_secret
+    try:
+        token_hours = int(
+            app.config.get("JWT_ACCESS_TOKEN_EXPIRES_HOURS")
+            or os.getenv("JWT_ACCESS_TOKEN_EXPIRES_HOURS", "8")
+        )
+    except ValueError as error:
+        raise RuntimeError(
+            "JWT_ACCESS_TOKEN_EXPIRES_HOURS debe ser un entero positivo."
+        ) from error
+    if token_hours < 1:
+        raise RuntimeError(
+            "JWT_ACCESS_TOKEN_EXPIRES_HOURS debe ser un entero positivo."
+        )
+    app.config["JWT_ACCESS_TOKEN_EXPIRES_HOURS"] = token_hours
+
     CORS(
         app,
         resources={
@@ -59,13 +81,15 @@ def create_app(settings=None, sqlite_store=None, mongo=None):
         return jsonify({"error": error.message, **error.details}), error.status_code
 
     @app.errorhandler(sqlite3.Error)
-    def handle_sqlite_error(error):
-        app.logger.exception("Error al operar con SQLite")
+    def handle_sqlite_error(_error):
+        app.logger.exception("Error al operar con SQLite: %s", _error)
         return jsonify({"error": "No se pudo completar la operación en SQLite."}), 503
 
     @app.errorhandler(PyMongoError)
     def handle_mongo_error(error):
-        app.logger.exception("Error al operar con MongoDB")
+        app.logger.error(
+            "Error al operar con MongoDB: %s", sanitize_mongo_error(error)
+        )
         return jsonify({"error": "No se pudo completar la operación en MongoDB."}), 503
 
     register_routes(app, sqlite_store, mongo)

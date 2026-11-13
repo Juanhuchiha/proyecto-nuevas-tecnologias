@@ -1,57 +1,40 @@
 <script setup>
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { setUserRole } from '../data/restaurant'
+import { setSession } from '../data/restaurant'
+import { loginUser } from '../services/api'
 
 const email = ref('')
 const password = ref('')
 const errorMessage = ref('')
 const router = useRouter()
 
-function login() {
+async function login() {
   errorMessage.value = ''
 
-  if (!email.value.trim() || !password.value.trim()) {
+  if (!email.value.trim() || !password.value) {
     errorMessage.value = 'Completa el correo y la contraseña para continuar.'
     return
   }
 
-  const normalizedEmail = email.value.trim().toLowerCase()
-  let selectedRole = null
-
-  if (
-    normalizedEmail === 'cliente@example.com' &&
-    password.value === '123456'
-  ) {
-    selectedRole = 'cliente'
-  } else if (
-    normalizedEmail === 'admin@example.com' &&
-    password.value === '123456'
-  ) {
-    selectedRole = 'admin'
-  } else if (
-    normalizedEmail === 'repartidor@example.com' &&
-    password.value === '123456'
-  ) {
-    selectedRole = 'repartidor'
-  } else {
-    errorMessage.value = 'El correo o la contraseña son incorrectos.'
-    return
-  }
-
   try {
-    setUserRole(selectedRole, normalizedEmail.split('@')[0])
+    const response = await loginUser({
+      correo: email.value.trim().toLowerCase(),
+      password: password.value,
+    })
+    setSession(response.usuario, response.token)
     const destination = {
       cliente: { name: 'catalogo' },
       admin: { name: 'admin' },
       repartidor: { name: 'envios' },
-    }[selectedRole]
+      auditor: { name: 'auditoria' },
+    }[response.usuario.rol] || { name: 'catalogo' }
     router.push(destination)
   } catch (error) {
     errorMessage.value =
       error instanceof Error
-        ? `No se pudo guardar la sesión: ${error.message}`
-        : 'No se pudo guardar la sesión. Inténtalo de nuevo.'
+        ? error.message
+        : 'No se pudo iniciar sesión. Inténtalo de nuevo.'
   }
 }
 </script>
@@ -98,6 +81,9 @@ function login() {
               </p>
 
               <button class="btn btn-primary w-100" type="submit">Ingresar</button>
+              <p class="mt-3 mb-0 text-center">
+                <RouterLink to="/registro">Crear cuenta</RouterLink>
+              </p>
             </form>
           </div>
         </div>

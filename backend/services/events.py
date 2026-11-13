@@ -2,6 +2,8 @@ import logging
 
 from pymongo.errors import PyMongoError
 
+from backend.database.mongo_connection import sanitize_mongo_error
+
 logger = logging.getLogger(__name__)
 
 
@@ -14,10 +16,12 @@ def publish_pending_events(sqlite_store, mongo):
                 event_id, event["coleccion"], event["documento"]
             )
         except PyMongoError as error:
-            sqlite_store.mark_event_failed(event_id, str(error))
-            logger.exception(
-                "No se pudo publicar el evento %s en MongoDB; queda pendiente de reintento.",
+            safe_error = sanitize_mongo_error(error)
+            sqlite_store.mark_event_failed(event_id, safe_error)
+            logger.error(
+                "No se pudo publicar el evento %s en MongoDB; queda pendiente de reintento: %s",
                 event_id,
+                safe_error,
             )
             continue
         sqlite_store.mark_event_published(event_id)

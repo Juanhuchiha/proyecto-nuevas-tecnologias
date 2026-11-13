@@ -1,268 +1,189 @@
-# Sistema de Gestión de Pedidos en Línea para Restaurante
+Sistema de Gestión de Pedidos en Línea para Restaurante – Mesa Roja
+Usuarios para ingresar al sistema
+Estas son las cuentas de prueba para entrar a los diferentes módulos. La contraseña se define al preparar las cuentas.
+Rol	Correo
+Administrador	jcamilogrimaldoperez@admin.com
+Cliente	jcamilogrimaldoperez@cliente.com
+Repartidor	jcamilogrimaldoperez@repartidor.com
+Auditor	jcamilogrimaldoperez@auditor.com
 
-Este proyecto consiste en una aplicación web para administrar los pedidos de un restaurante. Permite consultar los productos disponibles, crear pedidos y revisar cómo va su estado. También cuenta con una parte de administración para manejar la información del restaurante.
 
-El frontend está hecho con Vue 3, Vue Router, Bootstrap 5 y Vite. Para el backend se utiliza Python con Flask. Además, el proyecto trabaja con dos bases de datos: SQLite y MongoDB.
+Importante: las cuentas se deben crear primero con el comando explicado en la sección Preparar las cuentas de demostración. En otro computador también hay que ejecutar ese paso. Son cuentas para pruebas académicas, no para un entorno real.
+1. ¿De qué trata el proyecto?
+Mesa Roja es una aplicación web para gestionar los pedidos de un restaurante. Los clientes pueden consultar los productos disponibles, realizar pedidos y revisar su estado. También cuenta con opciones para administrar productos, inventario, entregas y reportes.
 
-## ¿Cómo se utilizan las bases de datos?
+El proyecto tiene dos partes: una página desarrollada con Vue y una API desarrollada con Flask. Para guardar la información se utilizan SQLite y MongoDB, cada una para manejar datos diferentes.
+2. Tecnologías utilizadas
+- Frontend: Vue 3, Vue Router, Bootstrap 5 y Vite.
+- Backend: Python 3 y Flask.
+- Bases de datos: SQLite y MongoDB Atlas.
+- Conexión con MongoDB: PyMongo.
+- Autenticación: JWT.
+- Protección de contraseñas: Werkzeug.
+- Pruebas de rutas: Postman.
+3. ¿Qué información guarda cada base de datos?
+SQLite guarda la información principal del restaurante: usuarios, roles, productos, existencias, pedidos y detalles de cada pedido. Estos datos se organizan en tablas.
 
-Para esta entrega se decidió utilizar las dos bases de datos porque no toda la información del restaurante necesita guardarse de la misma manera.
+MongoDB guarda información relacionada con las actividades del sistema, como el historial de pedidos, las actividades de los usuarios y los registros del sistema. Utiliza las siguientes colecciones:
+- actividades_usuarios
+- historial_pedidos
+- registros_sistema
+Cuando se crea un pedido o se cambia su estado, la operación principal se guarda en SQLite y también se registra un evento para enviarlo a MongoDB. Si MongoDB no está disponible, el evento queda pendiente para intentar enviarlo nuevamente.
 
-- **SQLite:** se utiliza para guardar la información principal, como usuarios, productos, pedidos, detalles de los pedidos, existencias y ventas. Estos datos tienen una estructura definida y necesitan mantener sus relaciones.
-- **MongoDB:** se utiliza para guardar actividades de los usuarios, cambios que se hacen en los pedidos y registros del sistema. Esta información puede tener datos diferentes dependiendo de lo que haya ocurrido.
+La ruta GET /pedidos/<id>/historial permite consultar información del pedido junto con su historial.
+4. Requisitos para ejecutar el proyecto
+Para ejecutar el proyecto en Windows se necesita:
+- Python 3.10 o superior, con pip.
+- Node.js LTS, que incluye npm.
+- Una cuenta de MongoDB Atlas con un clúster, un usuario de base de datos y la dirección IP del computador autorizada en Network Access.
+- Conexión a internet para instalar las dependencias y conectarse a MongoDB Atlas.
+- Git, solamente si se va a descargar el proyecto directamente desde GitHub. Si se recibe el proyecto en un archivo ZIP, no hace falta instalar Git.
+SQLite se crea en el propio computador. MongoDB funciona mediante Atlas, por lo que se necesita configurar una conexión válida para poder utilizar las funciones que guardan o consultan historiales y actividades.
+5. Descargar y preparar el proyecto
+El proyecto se puede obtener de estas dos formas:
+1. Descargar el archivo ZIP y extraerlo por completo.
+2. Clonar el repositorio de GitHub: https://github.com/Juanhuchiha/proyecto-nuevas-tecnologias
+Después de extraerlo, abre la carpeta mi-proyecto-vue. Esta es la carpeta principal del proyecto, donde se encuentran las carpetas backend y frontend, además del archivo .env.example.
 
-En MongoDB se utiliza un campo llamado `datos`, donde se pueden guardar características adicionales sin tener que modificar las tablas de SQLite cada vez que se necesite agregar información.
-
-Cuando se crea un pedido o se cambia su estado, primero se guarda la información en SQLite. Después, los eventos relacionados se envían a MongoDB. Si MongoDB no está disponible en ese momento, los eventos quedan guardados en una cola de SQLite para intentar enviarlos nuevamente.
-
-También se implementó una ruta que permite consultar la información de un pedido junto con su historial. Para hacerlo, Flask consulta las dos bases de datos y reúne los resultados.
-
-SQLite utiliza las siguientes tablas:
-
-- `usuarios`
-- `productos`
-- `pedidos`
-- `detalles_pedido`
-- `cola_eventos`
-
-Estas tablas están definidas en `backend/database/schema.sql` y se crean automáticamente cuando se inicia el backend.
-
-En MongoDB se utilizan tres colecciones:
-
-- `actividades_usuarios`: guarda las actividades realizadas, su descripción, fecha, usuario relacionado y otros datos.
-- `historial_pedidos`: guarda la creación de los pedidos y los cambios que se realizan en sus estados.
-- `registros_sistema`: guarda acciones que se realizan dentro de la aplicación.
-
-Los documentos de MongoDB pueden tener información relacionada con los usuarios y pedidos de SQLite mediante sus identificadores. También se utilizan índices para facilitar las consultas por pedido, usuario y fecha.
-
-## Tecnologías utilizadas
-
-- Vue.js 3
-- Vue Router
-- Bootstrap 5
-- Vite
-- Python 3
-- Flask
-- Flask-CORS
-- SQLite
-- MongoDB
-- PyMongo
-- python-dotenv
-- unittest
-
-## Organización del proyecto
-
-El proyecto está dividido en dos partes principales:
-
-- `frontend/`: contiene la aplicación desarrollada en Vue. Aquí están las páginas, componentes, estilos, rutas y servicios que se comunican con el backend.
-- `backend/`: contiene la API desarrollada con Flask y todo lo relacionado con las bases de datos.
-
-Dentro del backend se encuentran algunos archivos importantes:
-
-- `backend/app.py`: inicia la aplicación Flask.
-- `backend/routes/`: contiene las rutas de la API.
-- `backend/services/`: contiene la parte encargada de manejar los eventos.
-- `backend/database/`: contiene la conexión con las bases de datos y el archivo con las tablas de SQLite.
-- `backend/tests/`: contiene las pruebas del proyecto.
-- `backend/config.py`: carga la configuración de la aplicación.
-
-También se encuentra la carpeta `evidencias/`, donde se guardan los resultados de las pruebas y otros documentos relacionados con la entrega.
-
-## Cómo configurar el proyecto en Windows
-
-### 1. Configurar MongoDB
-
-Para utilizar MongoDB se puede trabajar con una instalación local o con MongoDB Atlas. En este proyecto se utiliza Atlas.
-
-Primero se debe tener creado el clúster, un usuario de base de datos y permitir la dirección IP desde la que se va a conectar la aplicación. Esto se configura desde las opciones de Network Access de MongoDB Atlas.
-
-Después, desde la carpeta principal del proyecto, se crea el archivo `.env` usando el ejemplo que viene incluido:
-
-```powershell
-Copy-Item .env.example .env
-```
-
-Abre el archivo `.env` y coloca la información de conexión:
-
-```dotenv
-SQLITE_DATABASE_PATH=backend/data/mesa_roja.db
-VITE_API_URL=http://127.0.0.1:5000
-MONGODB_URI=mongodb+srv://<usuario>:<contraseña>@<cluster>.mongodb.net/?retryWrites=true&w=majority
-MONGODB_DATABASE=mesa_roja
-```
-
-Se deben reemplazar los datos de ejemplo por los de la propia cuenta de MongoDB Atlas.
-
-**Importante:** el archivo `.env` contiene información privada. No se debe subir a GitHub ni compartir la contraseña de MongoDB. Si la contraseña tiene caracteres especiales, puede ser necesario codificarlos para utilizarlos en la URI.
-
-La base de datos de SQLite se crea automáticamente al iniciar Flask. No es necesario crear manualmente sus tablas.
-
-### 2. Instalar y ejecutar el backend
-
-Abre una terminal en la carpeta principal del proyecto y ejecuta:
-
-```powershell
+Abre PowerShell desde esa carpeta. Los comandos de esta guía se deben ejecutar desde la carpeta principal, no desde la carpeta externa que contiene el ZIP.
+Crear el entorno virtual e instalar las dependencias de Python
 py -m venv backend\.venv
 .\backend\.venv\Scripts\Activate.ps1
 python -m pip install -r backend\requirements.txt
+Si PowerShell no permite activar el entorno virtual, puedes ejecutar primero este comando en la misma ventana:
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+Después vuelve a ejecutar el comando de activación.
+6. Configurar las bases de datos
+Desde la carpeta principal, crea el archivo .env usando el archivo de ejemplo:
+Copy-Item .env.example .env
+Abre .env y completa los datos de configuración. El contenido debe tener esta estructura:
+SQLITE_DATABASE_PATH=backend/data/mesa_roja.db
+VITE_API_URL=http://127.0.0.1:5000
+JWT_SECRET_KEY=
+JWT_ACCESS_TOKEN_EXPIRES_HOURS=8
+MONGODB_URI=
+MONGODB_DATABASE=mesa_roja
+En MONGODB_URI debes colocar la dirección de conexión de tu propio clúster de MongoDB Atlas. También debes crear un usuario de base de datos y autorizar la IP del computador desde Network Access en Atlas.
+
+La clave JWT_SECRET_KEY debe ser privada y tener al menos 32 caracteres. Puedes generar una desde PowerShell con:
+python -c "import secrets; print(secrets.token_urlsafe(48))"
+Copia el resultado en JWT_SECRET_KEY.
+
+No compartas el archivo .env ni lo subas a GitHub, porque contiene la conexión a MongoDB y la clave utilizada para firmar los tokens. El archivo .env.example sí se puede compartir porque contiene valores de ejemplo.
+
+Las tablas de SQLite se preparan cuando se inicia el backend. No es necesario crearlas manualmente.
+7. Preparar las cuentas de demostración
+Las cuentas de prueba que aparecen al principio de este README no se crean automáticamente al iniciar Flask. Para crearlas, abre PowerShell desde la carpeta principal y ejecuta:
+$env:MESA_ROJA_ENV = "development"
+$env:MESA_ROJA_DEMO_MODE = "true"
+.\backend\.venv\Scripts\python.exe -m backend.seed_demo_users
+El programa pedirá una contraseña y después solicitará confirmarla. Elige una contraseña de prueba de al menos seis caracteres e ingrésala en las dos ocasiones. No reutilices una contraseña personal. La contraseña no se muestra mientras se escribe.
+
+Al terminar, puedes quitar las variables de la terminal:
+Remove-Item Env:\MESA_ROJA_ENV, Env:\MESA_ROJA_DEMO_MODE
+Las contraseñas se guardan protegidas con Werkzeug. Si vuelves a ejecutar el comando, no se crean cuentas duplicadas.
+8. Iniciar el backend
+Desde PowerShell, ubicado en la carpeta principal y con el entorno virtual activado, ejecuta:
 python -m backend.app
-```
-
-Si Windows no permite activar el entorno virtual, también se pueden ejecutar los comandos directamente desde Python:
-
-```powershell
-.\backend\.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
-.\backend\.venv\Scripts\python.exe -m backend.app
-```
-
-Cuando Flask esté funcionando, la API estará disponible en:
-
-`http://127.0.0.1:5000`
-
-Para comprobar el estado de las bases de datos se puede consultar:
-
-`http://127.0.0.1:5000/salud`
-
-Esta ruta permite revisar el estado de SQLite y MongoDB.
-
-### 3. Ejecutar el frontend
-
-Abre otra terminal en la carpeta principal del proyecto y ejecuta:
-
-```powershell
+Flask quedará disponible en:
+http://127.0.0.1:5000
+Para revisar el estado de las conexiones con las bases de datos, abre esta dirección en el navegador:
+http://127.0.0.1:5000/salud
+Si una conexión falla, la ruta responde con HTTP 503 e indica por separado el estado de SQLite y MongoDB, sin incluir la contraseña de Atlas.
+Deja abierta esta ventana de PowerShell mientras utilizas el programa.
+9. Iniciar el frontend
+Abre una segunda ventana de PowerShell desde la carpeta principal del proyecto y ejecuta:
 npm --prefix frontend ci
 npm --prefix frontend run dev
-```
+Vite mostrará una dirección local, normalmente:
+http://localhost:5173
+Abre esa dirección en el navegador. Mantén abiertas las dos ventanas de PowerShell: una ejecutando Flask y la otra ejecutando Vite.
+10. Ingresar y utilizar el sistema
+Cuando los dos servidores estén funcionando, entra a http://localhost:5173. Aparecerá la pantalla de inicio de sesión. Escribe el correo y la contraseña de alguna de las cuentas de prueba.
 
-Vite mostrará la dirección local donde se puede abrir la aplicación desde el navegador.
+Cada cuenta tiene permisos diferentes:
+Rol	Funciones principales
+Administrador	Gestiona productos, inventario y usuarios; consulta y administra pedidos; revisa reportes y actividades.
+Cliente	Consulta el catálogo, realiza pedidos y revisa sus propios pedidos y estados.
+Repartidor	Consulta los pedidos relacionados con las entregas y actualiza su estado.
+Auditor	Consulta pedidos, historiales, actividades y reportes de ventas e inventario. Tiene permisos de consulta.
 
-Por defecto, el frontend se comunica con el backend en `http://127.0.0.1:5000`.
 
-## Rutas de la API
+Para probar las funciones de los diferentes roles, cierra la sesión y vuelve a ingresar con otra cuenta.
+Ejemplo de uso
+1. Ingresa como administrador y revisa que existan productos con unidades disponibles. Si hace falta, crea o actualiza un producto.
+2. Cierra sesión e ingresa como cliente. Consulta el catálogo y registra un pedido.
+3. Ingresa como administrador o repartidor para consultar el pedido y actualizar su estado, de acuerdo con los permisos de cada rol.
+4. Vuelve a ingresar como cliente para revisar el estado del pedido.
+5. Ingresa como auditor o administrador para consultar los reportes y revisar el historial del pedido.
+Cuando termines de utilizar el programa, presiona Ctrl + C en cada ventana de PowerShell para detener Flask y Vite.
+11. Autenticación y permisos
+El sistema permite registrar nuevos usuarios desde el formulario de registro. Las cuentas nuevas se crean con el rol de cliente. Las contraseñas se guardan en SQLite después de aplicarles hashing con Werkzeug; no se almacenan como texto normal.
 
-Estas son las principales rutas que tiene el proyecto:
+Cuando un usuario inicia sesión correctamente, la API genera un token JWT. Este token se envía en las solicitudes a las rutas protegidas mediante el encabezado:
+Authorization: Bearer <token>
+El tiempo de duración del token se configura en JWT_ACCESS_TOKEN_EXPIRES_HOURS. Los permisos se comprueban desde el backend según el rol del usuario.
+12. Rutas principales de la API
+Las rutas se pueden probar desde Postman. Para utilizar las rutas protegidas, primero debes iniciar sesión y enviar el token JWT en el encabezado Authorization.
+Método	Ruta	Función	Acceso
+GET	/salud	Revisa las conexiones con SQLite y MongoDB.	Público
+POST	/auth/registro	Registra una cuenta nueva de cliente.	Público
+POST	/auth/login	Comprueba los datos de ingreso y devuelve un token.	Público
+GET	/auth/perfil	Consulta los datos del usuario conectado.	Usuarios autenticados
+POST	/auth/logout	Cierra la sesión.	Usuarios autenticados
+GET	/productos	Consulta los productos y sus existencias.	Público
+POST	/productos	Crea un producto.	Administrador
+PATCH	/productos/<id>	Actualiza un producto o su inventario.	Administrador
+DELETE	/productos/<id>	Desactiva un producto.	Administrador
+POST	/usuarios	Crea o actualiza usuarios.	Administrador
+POST	/pedidos	Registra un pedido y descuenta las existencias.	Cliente
+GET	/pedidos	Consulta los pedidos permitidos para el usuario.	Según el rol y sus permisos
+GET	/pedidos/<id>	Consulta un pedido específico.	Según el rol y sus permisos
+PATCH	/pedidos/<id>/estado	Actualiza el estado de entrega.	Administrador y repartidor
+GET	/pedidos/<id>/historial	Consulta el pedido y su historial.	Según el rol y sus permisos
+GET	/actividades	Consulta las actividades registradas.	Administrador y auditor
+GET	/actividades/<id>	Consulta una actividad específica.	Administrador y auditor
+POST	/actividades	Registra una actividad.	Administrador
+PATCH	/actividades/<id>	Modifica una actividad.	Administrador
+DELETE	/actividades/<id>	Elimina una actividad.	Administrador
+POST	/eventos/pendientes/reintentar	Intenta enviar a MongoDB los eventos pendientes.	Administrador
+GET	/reportes/ventas	Consulta las ventas y los pedidos por fechas.	Administrador y auditor
+GET	/reportes/inventario	Consulta los productos y sus existencias.	Administrador y auditor
 
-| Método | Ruta | Función |
-|---|---|---|
-| GET | `/salud` | Comprueba el estado de las bases de datos. |
-| GET | `/productos` | Consulta los productos disponibles. |
-| POST | `/usuarios` | Crea o actualiza un usuario. |
-| POST | `/pedidos` | Registra un pedido y actualiza las existencias. |
-| GET | `/pedidos` | Consulta los pedidos registrados. |
-| GET | `/pedidos/<id>` | Consulta un pedido específico. |
-| PATCH | `/pedidos/<id>/estado` | Cambia el estado de un pedido. |
-| GET | `/pedidos/<id>/historial` | Consulta el pedido y su información relacionada en ambas bases de datos. |
-| POST | `/actividades` | Registra una actividad en MongoDB. |
-| GET | `/actividades` | Consulta las actividades guardadas. |
-| GET | `/actividades/<id>` | Consulta una actividad específica. |
-| PATCH | `/actividades/<id>` | Actualiza una actividad. |
-| DELETE | `/actividades/<id>` | Elimina una actividad. |
-| POST | `/eventos/pendientes/reintentar` | Intenta enviar nuevamente los eventos pendientes. |
-| GET | `/reportes/ventas` | Consulta el reporte de ventas. |
 
-### Ejemplo de uso de MongoDB
+13. Ejemplos para probar la API
+Iniciar sesión
 
-Para registrar una actividad se puede utilizar la ruta:
-
-`POST /actividades`
-
-Con un cuerpo JSON como este:
-
-```json
+Envía una solicitud POST a /auth/login con este contenido JSON:
 {
-  "usuario_id": 1,
-  "pedido_id": 1,
-  "tipo": "nota",
-  "descripcion": "El cliente confirmó la dirección.",
-  "responsable": "Operador",
-  "datos": {
-    "canal": "telefono",
-    "requiere_confirmacion": false
-  }
+  "correo": "jcamilogrimaldoperez@cliente.com",
+  "password": "<contraseña elegida al preparar las cuentas>"
 }
-```
+Sustituye el valor de ejemplo por la contraseña elegida al preparar las cuentas. La respuesta incluye los datos del usuario y el token que se utiliza en las rutas protegidas.
 
-También se puede cambiar el estado de un pedido utilizando:
+Registrar un pedido
 
-`PATCH /pedidos/1/estado`
-
-```json
+Envía una solicitud POST a /pedidos con un contenido parecido a este:
 {
-  "estado": "En camino",
-  "usuario": {
-    "id": 1,
-    "nombre": "Repartidor"
-  }
+  "productos": [
+    {
+      "producto_id": 1,
+      "cantidad": 1
+    }
+  ],
+  "direccion": "Dirección de entrega"
 }
-```
+El producto indicado debe existir y tener unidades disponibles.
 
-Una de las rutas más importantes de esta entrega es:
-
-`GET /pedidos/1/historial`
-
-Esta consulta devuelve la información del pedido desde SQLite y su historial, actividades y registros relacionados desde MongoDB.
-
-### Colección de Postman
-
-El proyecto incluye una colección de Postman en:
-
-`postman/mesa-roja.postman_collection.json`
-
-Se puede importar desde Postman usando la opción **Import > File**.
-
-Para probar el funcionamiento, primero se debe crear un usuario de prueba y después un pedido. La colección permite continuar con las demás solicitudes utilizando los identificadores que se guardan en las respuestas.
-
-Las operaciones de actividades y el historial necesitan que MongoDB esté conectado.
-
-## Datos anteriores del proyecto
-
-En una versión anterior se había trabajado con PostgreSQL. Para esta versión se cambió la parte relacional a SQLite, manteniendo MongoDB para la información dinámica.
-
-Este cambio no elimina automáticamente los datos que pudieran existir en una instalación anterior de PostgreSQL. Si se necesitan conservar, se deben exportar y migrar por separado.
-
-## Pruebas del proyecto
-
-Para ejecutar las pruebas del backend se utiliza:
-
-```powershell
-python -m unittest discover -s backend\tests -t .
-```
-
-Para comprobar que el frontend se puede compilar:
-
-```powershell
-npm --prefix frontend run build
-```
-
-Las pruebas unitarias revisan el funcionamiento de SQLite, la creación de pedidos, el manejo de existencias, las actividades y las consultas que utilizan las dos bases de datos. En estas pruebas MongoDB se reemplaza por una versión simulada, por lo que no sirven por sí solas para demostrar una conexión real con Atlas.
-
-Para probar la conexión real con MongoDB se utiliza:
-
-```powershell
-python -m backend.integration_smoke
-```
-
-Este comando realiza pruebas de conexión, lectura y escritura utilizando la configuración de MongoDB que se encuentra en `.env`. Se recomienda ejecutarlo con una base de pruebas y no con información real del restaurante.
-
-Los resultados y archivos relacionados con las pruebas se encuentran en la carpeta `evidencias/`.
-
-## Informe en PDF
-
-El proyecto también incluye un documento PDF con la explicación de la implementación de MongoDB y la forma en que se utilizan las dos bases de datos.
-
-Si se necesita generar nuevamente, se pueden instalar las dependencias adicionales y ejecutar:
-
-```powershell
-python -m pip install -r backend\requirements-docs.txt
-python -m backend.generate_report
-```
-
-## Usuarios de demostración
-
-Para probar el inicio de sesión del frontend se encuentran estos usuarios de ejemplo:
-
-- `cliente@example.com`
-- `admin@example.com`
-- `repartidor@example.com`
-
-La contraseña para los tres es `123456`.
+Consultar las ventas de un periodo
+GET /reportes/ventas?desde=2026-01-01&hasta=2026-01-31
+14. Colección de Postman
+El proyecto incluye una colección para probar las rutas de la API:
+postman/mesa-roja.postman_collection.json
+Para utilizarla:
+1. Abre Postman.
+2. Selecciona Import.
+3. Busca y selecciona el archivo mesa-roja.postman_collection.json dentro de la carpeta postman.
+4. Configura la dirección base de la API (baseUrl).
+5. Inicia sesión para obtener un token JWT.
+6. Utiliza ese token en las solicitudes que necesitan autenticación.

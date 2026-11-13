@@ -108,12 +108,25 @@ export const products = reactive([
 ])
 
 export const cart = reactive([])
-const validRoles = ['cliente', 'admin', 'repartidor']
+const validRoles = ['cliente', 'admin', 'repartidor', 'auditor']
 const storedRole =
   typeof localStorage === 'undefined' ? null : localStorage.getItem('restaurant-role')
+const storedUser =
+  typeof localStorage === 'undefined'
+    ? null
+    : JSON.parse(localStorage.getItem('restaurant-user') || 'null')
+const storedToken =
+  typeof localStorage === 'undefined' ? '' : localStorage.getItem('restaurant-token') || ''
+
 export const currentUser = reactive({
-  name: '',
-  role: validRoles.includes(storedRole) ? storedRole : null,
+  id: storedUser?.id ?? null,
+  name: storedUser?.nombre || '',
+  email: storedUser?.correo || '',
+  role: validRoles.includes(storedRole)
+    ? storedRole
+    : validRoles.includes(storedUser?.rol)
+      ? storedUser.rol
+      : null,
 })
 export const deliveries = reactive([])
 export const cartCount = computed(() =>
@@ -130,10 +143,34 @@ export function setUserRole(role, name) {
   currentUser.name = name
 }
 
+export function setSession(user, token) {
+  const safeUser = user || {}
+  if (safeUser.rol && !validRoles.includes(safeUser.rol)) {
+    throw new Error('El rol seleccionado no es válido.')
+  }
+
+  if (token) localStorage.setItem('restaurant-token', token)
+  localStorage.setItem('restaurant-user', JSON.stringify(safeUser))
+  if (safeUser.rol) localStorage.setItem('restaurant-role', safeUser.rol)
+
+  currentUser.id = safeUser.id ?? currentUser.id ?? null
+  currentUser.name = safeUser.nombre || safeUser.name || currentUser.name || ''
+  currentUser.email = safeUser.correo || safeUser.email || ''
+  currentUser.role = validRoles.includes(safeUser.rol) ? safeUser.rol : null
+}
+
 export function clearUserRole() {
   localStorage.removeItem('restaurant-role')
+  localStorage.removeItem('restaurant-user')
+  localStorage.removeItem('restaurant-token')
+  currentUser.id = null
   currentUser.role = null
   currentUser.name = ''
+  currentUser.email = ''
+}
+
+export function getAuthToken() {
+  return typeof localStorage === 'undefined' ? '' : localStorage.getItem('restaurant-token') || ''
 }
 
 export function formatPrice(price) {

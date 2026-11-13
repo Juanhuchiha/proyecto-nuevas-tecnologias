@@ -2,7 +2,11 @@ CREATE TABLE IF NOT EXISTS usuarios (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     nombre TEXT NOT NULL,
     correo TEXT NOT NULL UNIQUE,
-    direccion TEXT NOT NULL DEFAULT ''
+    direccion TEXT NOT NULL DEFAULT '',
+    rol TEXT NOT NULL DEFAULT 'cliente'
+        CHECK (rol IN ('cliente', 'admin', 'repartidor', 'auditor')),
+    password_hash TEXT,
+    token_version INTEGER NOT NULL DEFAULT 0 CHECK (token_version >= 0)
 );
 
 CREATE TABLE IF NOT EXISTS productos (
